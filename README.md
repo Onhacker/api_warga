@@ -41,13 +41,13 @@ berkas dari `PRIVATE_STORAGE_PATH`.
 ## Deployment
 
 1. Buat database `smartdesa_warga`, impor `database/schema.sql`, lalu `database/seed.sql` dari proyek PWA.
-2. Jika database lama, impor `database/migrations/001_sync_auth.sql`.
+2. Jika database lama, impor `database/migrations/001_sync_auth.sql`, `database/migrations/002_set_araboda_official.sql`, lalu `database/migrations/003_seed_jayawijaya_villages.sql` sesuai urutan.
 3. Upload isi folder ini ke document root `api-warga-smartdesa.mediaverse.co.id`.
 4. Salin `.env.example` menjadi `.env`, isi `APP_KEY`, database, dan `WARGA_ALLOWED_ORIGIN`.
 5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat dibaca PHP,
    dan gunakan path yang sama dengan PWA warga bila keduanya berbagi storage.
 6. Pastikan `API_DEMO_MODE=0` sebelum dipakai desa.
-7. Pastikan setiap kampung/desa yang akan dilayani sudah memiliki baris aktif pada `village_tenants`. Tenant awal Araboda menggunakan kode resmi `95.01.03.2003`.
+7. Pastikan data wilayah telah diimpor. Seed dan migrasi `003` memuat 332 kampung/kelurahan pada 40 distrik di Kabupaten Jayawijaya.
 8. Buat satu baris `village_installations` per instalasi desa. Untuk preview kredensial jalankan `php tools/provision_installation.php --village=KODE-DESA`; tambahkan `--write` setelah database siap. Satu perintah hanya membuat kredensial untuk satu desa, bukan membatasi API hanya untuk satu desa. Simpan `installation_code` dan `secret` di konfigurasi SmartDesa lokal, karena secret hanya ditampilkan saat provisioning.
 9. Uji `GET /v1/health`, lalu uji signature dari klien SmartDesa.
 
