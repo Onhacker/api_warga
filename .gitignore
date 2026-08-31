@@ -1,0 +1,9 @@
+.env
+application/cache/*
+application/logs/*
+application/sessions/*
+storage/*
+!application/cache/index.html
+!application/logs/index.html
+!application/sessions/index.html
+!storage/index.html
