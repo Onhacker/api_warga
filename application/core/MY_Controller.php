@@ -119,7 +119,7 @@ class MY_Controller extends CI_Controller
                 return FALSE;
             }
             $secret = $expectedSecret;
-            $installation = array('id' => 'demo-installation', 'installation_code' => $code, 'village_id' => '00000000-0000-4000-8000-000000000001', 'village_code' => 'DEMO-ARABODA', 'village_name' => 'Kampung Araboda');
+            $installation = array('id' => 'demo-installation', 'installation_code' => $code, 'village_id' => '00000000-0000-4000-8000-000000000001', 'village_code' => '95.01.03.2003', 'village_name' => 'Kampung Araboda');
         } else {
             if (!isset($this->db)) {
                 $this->fail('Database API belum tersedia.', 503, 'service_unavailable');

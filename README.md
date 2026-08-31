@@ -47,9 +47,10 @@ berkas dari `PRIVATE_STORAGE_PATH`.
 5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat dibaca PHP,
    dan gunakan path yang sama dengan PWA warga bila keduanya berbagi storage.
 6. Pastikan `API_DEMO_MODE=0` sebelum dipakai desa.
-7. Buat satu baris `village_installations` per instalasi desa. Untuk preview kredensial jalankan `php tools/provision_installation.php --village=KODE-DESA`; tambahkan `--write` setelah database siap. Simpan `installation_code` dan `secret` di konfigurasi SmartDesa lokal, karena secret hanya ditampilkan saat provisioning.
-8. Uji `GET /v1/health`, lalu uji signature dari klien SmartDesa.
+7. Pastikan setiap kampung/desa yang akan dilayani sudah memiliki baris aktif pada `village_tenants`. Tenant awal Araboda menggunakan kode resmi `95.01.03.2003`.
+8. Buat satu baris `village_installations` per instalasi desa. Untuk preview kredensial jalankan `php tools/provision_installation.php --village=KODE-DESA`; tambahkan `--write` setelah database siap. Satu perintah hanya membuat kredensial untuk satu desa, bukan membatasi API hanya untuk satu desa. Simpan `installation_code` dan `secret` di konfigurasi SmartDesa lokal, karena secret hanya ditampilkan saat provisioning.
+9. Uji `GET /v1/health`, lalu uji signature dari klien SmartDesa.
 
-Mode demo lokal memakai `DEMO-ARABODA-01` dan secret yang hanya untuk pengujian. Jangan membawa nilai demo ke server produksi.
+Mode demo hanya aktif jika sengaja diatur melalui `.env` untuk pengujian lokal. Jangan mengaktifkannya pada server produksi.
 
 Panduan pemasangan bersama PWA tersedia pada `../smartdesa-warga/DEPLOY_HOSTINGER.md`.
