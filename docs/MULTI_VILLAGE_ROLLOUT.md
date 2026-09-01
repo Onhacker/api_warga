@@ -31,54 +31,56 @@ API mencocokkan credential dengan `village_id`. Karena itu credential Araboda
 tidak boleh dipasang di laptop desa lain. Beberapa laptop untuk satu desa
 sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
 
-## Prosedur installer universal
+## Prosedur installer universal tanpa kode desa
 
-1. Pastikan baris desa sudah aktif di `village_tenants`.
-2. Buat credential satu desa, atau buat batch untuk desa yang siap:
+1. Pastikan seluruh desa yang dilayani aktif di `village_tenants` dan hanya
+   memiliki satu baris `village_installations` aktif.
+2. Provision seluruh instalasi pada server pusat. Output tetap privat dan hanya
+   berfungsi sebagai bahan pemulihan pengelola pusat:
 
    ```bash
    API_ENV=/home/USER/domains/api-warga-smartdesa.mediaverse.co.id/public_html/.env
-   php tools/provision_installations.php --village=95.01.03.2003 --env="$API_ENV"
-   php tools/provision_installations.php --village=95.01.03.2003 --write \
+   php tools/provision_installations.php --all --env="$API_ENV"
+   php tools/provision_installations.php --all --write \
      --env="$API_ENV" \
-     --output=/home/USER/smartdesa-private/araboda-credential.json
+     --output=/home/USER/smartdesa-private/installation-credentials.json
    ```
 
-3. Provisioning baru sudah membuat `enrollment_code` bersama kredensial sinkronisasi.
-   Ambil hanya kode milik desa dari file output privat. Untuk instalasi lama yang
-   belum memiliki kode, kode kedaluwarsa, atau penerbitan ulang, gunakan:
+3. Jalankan migrasi `005_auto_enrollment.sql`, lalu buat pasangan bootstrap yang
+   sama untuk API pusat dan workstation builder:
 
    ```bash
-   php tools/issue_enrollment_codes.php --all --env="$API_ENV"
-   php tools/issue_enrollment_codes.php --all --write --days=90 \
+   php tools/configure_auto_enrollment.php \
      --env="$API_ENV" \
-     --output=/home/USER/smartdesa-private/enrollment-codes.json
+     --builder-output=/home/USER/smartdesa-private/warga-builder.env \
+     --write
    ```
 
-   Tanpa `--force`, kode yang masih siap digunakan tidak ditimpa. Tambahkan
-   `--force` hanya bila kode lama memang harus dibatalkan dan diganti.
-
-4. Gunakan satu installer SmartDesa yang sama untuk seluruh desa. Berikan hanya
-   `enrollment_code` desa yang bersangkutan. Operator memilih distrik dan kampung,
-   lalu aplikasi menyimpan `installation_code` serta secret secara otomatis.
-5. Jalankan tes koneksi dan sinkronisasi dari laptop desa.
-6. Verifikasi bahwa `last_seen_at` dan `last_sync_at` berubah pada laporan
+   File builder bersifat rahasia, permission `0600`, dan tidak boleh berada di
+   `public_html` atau repository. Salin secara aman ke workstation builder dan
+   masukkan nilainya ke `.env.build` satu kali.
+4. Buat satu installer SmartDesa universal untuk semua desa. Installer membawa
+   bootstrap yang sama; identitas desa tetap berasal dari database lokal setelah
+   registrasi SmartDesa selesai.
+5. Saat Administrator membuka Permohonan Warga, aplikasi membaca `kode_desa`,
+   terhubung otomatis, menyimpan `installation_code` dan secret khusus desa,
+   kemudian mengosongkan bootstrap dari `.env` lokal. Operator tidak memilih
+   wilayah dan tidak memasukkan kode apa pun.
+6. Jalankan tes koneksi dan sinkronisasi dari laptop pilot.
+7. Verifikasi bahwa `last_seen_at` dan `last_sync_at` berubah pada laporan
    pusat.
 
-Untuk semua desa yang belum diprovision:
+Kode sekali pakai hanya merupakan jalur pemulihan instalasi lama:
 
 ```bash
-php tools/provision_installations.php --all --env="$API_ENV"
-php tools/provision_installations.php --all --write \
-  --env="$API_ENV" \
-  --output=/home/USER/smartdesa-private/installation-credentials.json
+php tools/issue_enrollment_codes.php --village=95.01.03.2003 --env="$API_ENV"
+php tools/issue_enrollment_codes.php --village=95.01.03.2003 --write \
+  --env="$API_ENV" --output=/home/USER/smartdesa-private/recovery-code.json
 ```
 
-File provisioning berisi secret mentah sekaligus `enrollment_code` dan dibuat
-dengan permission `0600`. File tersebut hanya untuk pengelola pusat. Bagikan
-hanya satu nilai `enrollment_code` kepada desa yang sesuai. File hasil penerbitan
-ulang tidak berisi secret, tetapi tetap privat: jangan menyimpannya di
-`public_html`, repository, atau membagikan seluruh file kepada satu desa.
+File provisioning dan kode pemulihan tetap hanya untuk pengelola pusat. Alur
+normal tidak membagikan file, kode enrollment, API key, atau API secret kepada
+desa.
 
 ## Monitoring
 
@@ -87,8 +89,8 @@ php tools/report_installations.php --env="$API_ENV" --format=text
 php tools/report_installations.php --env="$API_ENV" --format=csv > /home/USER/smartdesa-private/installation-report.csv
 ```
 
-Kolom `AKTIVASI` menunjukkan apakah kode masih siap, sudah dipakai, kedaluwarsa,
-atau belum tersedia. Kolom `IN` menunjukkan antrean dari warga menuju laptop
+Kolom `AKTIVASI` menunjukkan apakah instalasi sudah terikat pada perangkat.
+Kolom `IN` menunjukkan antrean dari warga menuju laptop
 desa, `OUT` menunjukkan perubahan dari laptop menuju API, dan `FAIL` menunjukkan
 pesan yang gagal.
 

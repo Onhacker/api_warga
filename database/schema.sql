@@ -165,6 +165,16 @@ CREATE TABLE IF NOT EXISTS installation_enrollment_attempts (
   KEY idx_enrollment_attempt_time (attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS auto_enrollment_nonces (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  key_hash CHAR(64) NOT NULL,
+  nonce_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_auto_enrollment_nonce (key_hash, nonce_hash),
+  KEY idx_auto_enrollment_expiry (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS api_request_nonces (
   installation_id CHAR(36) NOT NULL,
   nonce VARCHAR(128) NOT NULL,

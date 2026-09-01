@@ -42,7 +42,7 @@ class MY_Controller extends CI_Controller
             // OPTIONS exits before CodeIgniter flushes its output object.
             header('Access-Control-Allow-Origin: ' . $origin);
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-            header('Access-Control-Allow-Headers: Content-Type, X-SmartDesa-Installation, X-SmartDesa-Timestamp, X-SmartDesa-Nonce, X-SmartDesa-Signature');
+            header('Access-Control-Allow-Headers: Content-Type, X-SmartDesa-Installation, X-SmartDesa-Timestamp, X-SmartDesa-Nonce, X-SmartDesa-Signature, X-SmartDesa-Auto-Key, X-SmartDesa-Auto-Timestamp, X-SmartDesa-Auto-Nonce, X-SmartDesa-Auto-Signature');
             header('Vary: Origin');
         }
     }
