@@ -142,6 +142,10 @@ CREATE TABLE IF NOT EXISTS village_installations (
   sync_key_hash CHAR(64) NOT NULL,
   sync_secret_hash CHAR(64) NOT NULL,
   sync_secret_encrypted VARBINARY(1024) NULL,
+  enrollment_code_hash CHAR(64) NULL,
+  enrollment_expires_at DATETIME NULL,
+  enrollment_used_at DATETIME NULL,
+  enrollment_device_hash CHAR(64) NULL,
   app_version VARCHAR(50) NULL,
   last_seen_at DATETIME NULL,
   last_sync_at DATETIME NULL,
@@ -149,7 +153,16 @@ CREATE TABLE IF NOT EXISTS village_installations (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_installations_village (village_id, status),
+  KEY idx_installations_enrollment (enrollment_code_hash, status),
   CONSTRAINT fk_installations_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS installation_enrollment_attempts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ip_hash CHAR(64) NOT NULL,
+  attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_enrollment_attempt_ip (ip_hash, attempted_at),
+  KEY idx_enrollment_attempt_time (attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS api_request_nonces (

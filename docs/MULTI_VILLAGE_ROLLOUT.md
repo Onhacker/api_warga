@@ -31,7 +31,7 @@ API mencocokkan credential dengan `village_id`. Karena itu credential Araboda
 tidak boleh dipasang di laptop desa lain. Beberapa laptop untuk satu desa
 sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
 
-## Prosedur instalasi desa
+## Prosedur installer universal
 
 1. Pastikan baris desa sudah aktif di `village_tenants`.
 2. Buat credential satu desa, atau buat batch untuk desa yang siap:
@@ -44,10 +44,25 @@ sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
      --output=/home/USER/smartdesa-private/araboda-credential.json
    ```
 
-3. Masukkan `installation_code` dan `secret` pada pengaturan sinkronisasi
-   SmartDesa lokal.
-4. Jalankan tes koneksi dan sinkronisasi dari laptop desa.
-5. Verifikasi bahwa `last_seen_at` dan `last_sync_at` berubah pada laporan
+3. Provisioning baru sudah membuat `enrollment_code` bersama kredensial sinkronisasi.
+   Ambil hanya kode milik desa dari file output privat. Untuk instalasi lama yang
+   belum memiliki kode, kode kedaluwarsa, atau penerbitan ulang, gunakan:
+
+   ```bash
+   php tools/issue_enrollment_codes.php --all --env="$API_ENV"
+   php tools/issue_enrollment_codes.php --all --write --days=90 \
+     --env="$API_ENV" \
+     --output=/home/USER/smartdesa-private/enrollment-codes.json
+   ```
+
+   Tanpa `--force`, kode yang masih siap digunakan tidak ditimpa. Tambahkan
+   `--force` hanya bila kode lama memang harus dibatalkan dan diganti.
+
+4. Gunakan satu installer SmartDesa yang sama untuk seluruh desa. Berikan hanya
+   `enrollment_code` desa yang bersangkutan. Operator memilih distrik dan kampung,
+   lalu aplikasi menyimpan `installation_code` serta secret secara otomatis.
+5. Jalankan tes koneksi dan sinkronisasi dari laptop desa.
+6. Verifikasi bahwa `last_seen_at` dan `last_sync_at` berubah pada laporan
    pusat.
 
 Untuk semua desa yang belum diprovision:
@@ -59,9 +74,11 @@ php tools/provision_installations.php --all --write \
   --output=/home/USER/smartdesa-private/installation-credentials.json
 ```
 
-File output berisi secret mentah dan dibuat dengan permission `0600`. Jangan
-menyimpannya di `public_html`, repository, email biasa, atau membagikan seluruh
-file kepada satu desa. Ambil hanya baris desa yang bersangkutan.
+File provisioning berisi secret mentah sekaligus `enrollment_code` dan dibuat
+dengan permission `0600`. File tersebut hanya untuk pengelola pusat. Bagikan
+hanya satu nilai `enrollment_code` kepada desa yang sesuai. File hasil penerbitan
+ulang tidak berisi secret, tetapi tetap privat: jangan menyimpannya di
+`public_html`, repository, atau membagikan seluruh file kepada satu desa.
 
 ## Monitoring
 
@@ -70,8 +87,10 @@ php tools/report_installations.php --env="$API_ENV" --format=text
 php tools/report_installations.php --env="$API_ENV" --format=csv > /home/USER/smartdesa-private/installation-report.csv
 ```
 
-Kolom `IN` menunjukkan antrean dari warga menuju laptop desa, `OUT` menunjukkan
-perubahan dari laptop menuju API, dan `FAIL` menunjukkan pesan yang gagal.
+Kolom `AKTIVASI` menunjukkan apakah kode masih siap, sudah dipakai, kedaluwarsa,
+atau belum tersedia. Kolom `IN` menunjukkan antrean dari warga menuju laptop
+desa, `OUT` menunjukkan perubahan dari laptop menuju API, dan `FAIL` menunjukkan
+pesan yang gagal.
 
 ## Alur permohonan
 

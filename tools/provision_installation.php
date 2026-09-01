@@ -44,6 +44,14 @@ function urlsafe_secret()
     return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
 }
 
+function enrollment_code()
+{
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $raw = '';
+    for ($i = 0; $i < 16; $i++) $raw .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+    return 'SDW-' . implode('-', str_split($raw, 4));
+}
+
 $options = getopt('', array('village:', 'code::', 'secret::', 'write', 'env:', 'help'));
 if (isset($options['help']) || !option_value($options, 'village')) {
     fwrite(STDOUT, "Gunakan: php tools/provision_installation.php --village=KODE-DESA [--code=KODE] [--secret=SECRET] [--write] [--env=/path/.env]\n");
@@ -61,25 +69,34 @@ if (strlen($appKey) < 32 || stripos($appKey, 'change-before') !== false || strip
 $villageCode = strtoupper(option_value($options, 'village'));
 $installationCode = option_value($options, 'code') ?: 'SDW-' . strtoupper(bin2hex(random_bytes(6)));
 $secret = option_value($options, 'secret') ?: urlsafe_secret();
+$enrollmentCode = enrollment_code();
+$enrollmentExpiresAt = date('Y-m-d H:i:s', time() + (90 * 86400));
 if (!preg_match('/^[A-Za-z0-9._-]{3,100}$/', $installationCode) || strlen($secret) < 32) { fwrite(STDERR, "Kode atau secret tidak memenuhi format minimum.\n"); exit(1); }
 $tag = '';
 $ciphertext = openssl_encrypt($secret, 'aes-256-gcm', hash('sha256', $appKey, TRUE), OPENSSL_RAW_DATA, $iv = random_bytes(12), $tag, 'smartdesa-warga-api');
 if ($ciphertext === FALSE || strlen($tag) !== 16) { fwrite(STDERR, "Secret tidak dapat dienkripsi.\n"); exit(1); }
 $encrypted = base64_encode($iv . $tag . $ciphertext);
-$result = array('village_code' => $villageCode, 'installation_code' => $installationCode, 'secret' => $secret, 'sync_key_hash' => hash('sha256', $installationCode), 'sync_secret_hash' => hash('sha256', $secret), 'sync_secret_encrypted' => $encrypted, 'write' => isset($options['write']));
+$result = array('village_code' => $villageCode, 'installation_code' => $installationCode, 'secret' => $secret, 'enrollment_code' => $enrollmentCode, 'enrollment_expires_at' => $enrollmentExpiresAt, 'sync_key_hash' => hash('sha256', $installationCode), 'sync_secret_hash' => hash('sha256', $secret), 'sync_secret_encrypted' => $encrypted, 'write' => isset($options['write']));
 if (!isset($options['write'])) { echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL; exit(0); }
 
 $dsn = 'mysql:host=' . (getenv('DB_HOST') ?: '127.0.0.1') . ';port=' . (getenv('DB_PORT') ?: '3306') . ';dbname=' . (getenv('DB_NAME') ?: 'smartdesa_warga') . ';charset=utf8mb4';
 try {
     $pdo = new PDO($dsn, getenv('DB_USER') ?: 'root', getenv('DB_PASS') ?: '', array(PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC));
+    if (!$pdo->query("SHOW COLUMNS FROM village_installations LIKE 'enrollment_code_hash'")->fetch()) throw new RuntimeException('Migration 004_installation_enrollment.sql belum dijalankan.');
     $village = $pdo->prepare("SELECT id FROM village_tenants WHERE village_code = :code AND status = 'active' LIMIT 1");
     $village->execute(array(':code' => $villageCode));
     $villageRow = $village->fetch();
     if (!$villageRow) throw new RuntimeException('Kode desa aktif tidak ditemukan.');
-    $insert = $pdo->prepare('INSERT INTO village_installations (id, village_id, installation_code, sync_key_hash, sync_secret_hash, sync_secret_encrypted, status) VALUES (:id, :village_id, :code, :key_hash, :secret_hash, :encrypted, \'active\')');
-    $insert->execute(array(':id' => uuid_v4(), ':village_id' => $villageRow['id'], ':code' => $installationCode, ':key_hash' => hash('sha256', $installationCode), ':secret_hash' => hash('sha256', $secret), ':encrypted' => $encrypted));
+    $active = $pdo->prepare("SELECT id FROM village_installations WHERE village_id = :village_id AND status = 'active' LIMIT 1");
+    $active->execute(array(':village_id' => $villageRow['id']));
+    if ($active->fetch()) throw new RuntimeException('Desa ini sudah memiliki instalasi aktif. Gunakan laporan atau penerbitan ulang kode aktivasi, bukan provisioning baru.');
+    if (!$pdo->beginTransaction()) throw new RuntimeException('Transaksi provisioning tidak dapat dimulai.');
+    $insert = $pdo->prepare('INSERT INTO village_installations (id, village_id, installation_code, sync_key_hash, sync_secret_hash, sync_secret_encrypted, enrollment_code_hash, enrollment_expires_at, status) VALUES (:id, :village_id, :code, :key_hash, :secret_hash, :encrypted, :enrollment_hash, :enrollment_expires_at, \'active\')');
+    $insert->execute(array(':id' => uuid_v4(), ':village_id' => $villageRow['id'], ':code' => $installationCode, ':key_hash' => hash('sha256', $installationCode), ':secret_hash' => hash('sha256', $secret), ':encrypted' => $encrypted, ':enrollment_hash' => hash('sha256', preg_replace('/[^A-Z2-9]/', '', strtoupper($enrollmentCode))), ':enrollment_expires_at' => $enrollmentExpiresAt));
+    if (!$pdo->commit()) throw new RuntimeException('Transaksi provisioning tidak dapat disimpan.');
     echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
 } catch (Throwable $error) {
+    if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
     fwrite(STDERR, 'Gagal provisioning: ' . $error->getMessage() . PHP_EOL);
     exit(1);
 }

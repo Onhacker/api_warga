@@ -62,7 +62,11 @@ try {
         PDO::ATTR_EMULATE_PREPARES => false
     ));
     $villages = $pdo->query("SELECT id, village_code, name AS village_name, district_name FROM village_tenants WHERE status = 'active' ORDER BY district_name ASC, name ASC")->fetchAll();
-    $installations = $pdo->query("SELECT id, village_id, installation_code, status, app_version, last_seen_at, last_sync_at FROM village_installations ORDER BY village_id ASC, (status = 'active') DESC, updated_at DESC, id DESC")->fetchAll();
+    $hasEnrollmentSchema = (bool) $pdo->query("SHOW COLUMNS FROM village_installations LIKE 'enrollment_code_hash'")->fetch();
+    $enrollmentColumns = $hasEnrollmentSchema
+        ? ', enrollment_code_hash, enrollment_expires_at, enrollment_used_at'
+        : '';
+    $installations = $pdo->query("SELECT id, village_id, installation_code, status, app_version, last_seen_at, last_sync_at{$enrollmentColumns} FROM village_installations ORDER BY village_id ASC, (status = 'active') DESC, updated_at DESC, id DESC")->fetchAll();
     $queueRows = $pdo->query("SELECT village_id,
                                      SUM(direction = 'cloud_to_local' AND status IN ('pending', 'processing')) AS pending_inbound,
                                      SUM(direction = 'local_to_cloud' AND status IN ('pending', 'processing')) AS pending_outbound,
@@ -97,6 +101,23 @@ try {
             $installationStatus = 'not_provisioned';
             $installation = array();
         }
+        if (!$hasEnrollmentSchema) {
+            $enrollmentStatus = 'migration_required';
+        } elseif ($installationStatus === 'not_provisioned') {
+            $enrollmentStatus = 'not_provisioned';
+        } elseif ($installationStatus === 'multiple_active') {
+            $enrollmentStatus = 'multiple_active';
+        } elseif ($installationStatus === 'inactive') {
+            $enrollmentStatus = 'inactive';
+        } elseif (!empty($installation['enrollment_used_at'])) {
+            $enrollmentStatus = 'used';
+        } elseif (empty($installation['enrollment_code_hash'])) {
+            $enrollmentStatus = 'missing';
+        } elseif (!empty($installation['enrollment_expires_at']) && strtotime((string) $installation['enrollment_expires_at']) < time()) {
+            $enrollmentStatus = 'expired';
+        } else {
+            $enrollmentStatus = 'ready';
+        }
         $queue = isset($queuesByVillage[$villageId]) ? $queuesByVillage[$villageId] : array();
         $result[] = array(
             'village_code' => (string) $village['village_code'],
@@ -105,6 +126,8 @@ try {
             'installation_status' => $installationStatus,
             'installation_count' => count($villageInstallations),
             'installation_code' => !empty($installation['installation_code']) ? mask_code($installation['installation_code']) : '',
+            'enrollment_status' => $enrollmentStatus,
+            'enrollment_expires_at' => (string) (!empty($installation['enrollment_expires_at']) ? $installation['enrollment_expires_at'] : ''),
             'app_version' => (string) (!empty($installation['app_version']) ? $installation['app_version'] : ''),
             'last_seen_at' => (string) (!empty($installation['last_seen_at']) ? $installation['last_seen_at'] : ''),
             'last_sync_at' => (string) (!empty($installation['last_sync_at']) ? $installation['last_sync_at'] : ''),
@@ -127,16 +150,18 @@ try {
         exit(0);
     }
 
-    printf("%-16s %-30s %-22s %-17s %-4s %-18s %-12s %-19s %-19s %5s %5s %5s\n", 'KODE DESA', 'NAMA DESA', 'DISTRIK', 'STATUS', 'JML', 'INSTALASI', 'VERSI', 'TERAKHIR DILIHAT', 'TERAKHIR SINKRON', 'IN', 'OUT', 'FAIL');
-    printf("%s\n", str_repeat('-', 175));
+    printf("%-16s %-30s %-22s %-17s %-4s %-18s %-18s %-19s %-12s %-19s %-19s %5s %5s %5s\n", 'KODE DESA', 'NAMA DESA', 'DISTRIK', 'STATUS', 'JML', 'INSTALASI', 'AKTIVASI', 'KADALUWARSA', 'VERSI', 'TERAKHIR DILIHAT', 'TERAKHIR SINKRON', 'IN', 'OUT', 'FAIL');
+    printf("%s\n", str_repeat('-', 214));
     foreach ($result as $row) {
-        printf("%-16s %-30s %-22s %-17s %4d %-18s %-12s %-19s %-19s %5d %5d %5d\n",
+        printf("%-16s %-30s %-22s %-17s %4d %-18s %-18s %-19s %-12s %-19s %-19s %5d %5d %5d\n",
             substr($row['village_code'], 0, 16),
             substr($row['village_name'], 0, 30),
             substr($row['district_name'], 0, 22),
             substr($row['installation_status'], 0, 17),
             $row['installation_count'],
             substr($row['installation_code'], 0, 18),
+            substr($row['enrollment_status'], 0, 18),
+            substr($row['enrollment_expires_at'], 0, 19),
             substr($row['app_version'], 0, 12),
             substr($row['last_seen_at'], 0, 19),
             substr($row['last_sync_at'], 0, 19),

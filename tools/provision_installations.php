@@ -66,6 +66,21 @@ function urlsafe_secret()
     return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
 }
 
+function enrollment_code()
+{
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $raw = '';
+    for ($i = 0; $i < 16; $i++) {
+        $raw .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+    }
+    return 'SDW-' . implode('-', str_split($raw, 4));
+}
+
+function normalized_enrollment_code($code)
+{
+    return preg_replace('/[^A-Z2-9]/', '', strtoupper((string) $code));
+}
+
 function encrypt_secret($secret, $appKey)
 {
     $tag = '';
@@ -222,6 +237,10 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false
     ));
+    $enrollmentColumn = $pdo->query("SHOW COLUMNS FROM village_installations LIKE 'enrollment_code_hash'")->fetch();
+    if (!$enrollmentColumn) {
+        throw new RuntimeException('Migration 004_installation_enrollment.sql belum dijalankan.');
+    }
 
     if ($all) {
         $villageQuery = $pdo->query("SELECT id, village_code, name, district_name, regency_name FROM village_tenants WHERE status = 'active' ORDER BY district_name ASC, name ASC");
@@ -318,7 +337,8 @@ try {
         throw new RuntimeException('--output wajib diisi saat --write membuat kredensial baru.');
     }
 
-    $publicRoot = realpath(__DIR__ . '/..');
+    $publicRoot = realpath(dirname($envPath));
+    if ($publicRoot === false) $publicRoot = realpath(__DIR__ . '/..');
     if ($publicRoot === false) throw new RuntimeException('Root aplikasi API tidak ditemukan.');
     foreach ($pendingRows as $village) {
         $fragment = safe_code_fragment($village['village_code']);
@@ -331,13 +351,17 @@ try {
         }
         $usedCodes[strtoupper($installationCode)] = true;
         $secret = urlsafe_secret();
+        $enrollmentCode = enrollment_code();
+        $enrollmentExpiresAt = date('Y-m-d H:i:s', time() + (90 * 86400));
         $plannedRows[] = array(
             'id' => uuid_v4(),
             'village_id' => $village['id'],
             'installation_code' => $installationCode,
             'sync_key_hash' => hash('sha256', $installationCode),
             'sync_secret_hash' => hash('sha256', $secret),
-            'sync_secret_encrypted' => encrypt_secret($secret, $appKey)
+            'sync_secret_encrypted' => encrypt_secret($secret, $appKey),
+            'enrollment_code_hash' => hash('sha256', normalized_enrollment_code($enrollmentCode)),
+            'enrollment_expires_at' => $enrollmentExpiresAt
         );
         $newCredentials[] = array(
             'village_code' => $village['village_code'],
@@ -345,7 +369,9 @@ try {
             'district_name' => $village['district_name'],
             'regency_name' => $village['regency_name'],
             'installation_code' => $installationCode,
-            'secret' => $secret
+            'secret' => $secret,
+            'enrollment_code' => $enrollmentCode,
+            'enrollment_expires_at' => $enrollmentExpiresAt
         );
     }
     $preparedCredentialsFile = null;
@@ -355,13 +381,15 @@ try {
         $preparedCredentialsFile = prepare_credentials_file($outputPath, array(
             'format' => 'smartdesa-warga-installations-v1',
             'created_at' => date('c'),
-            'warning' => 'Rahasia hanya ditampilkan pada file ini. Simpan di luar public_html dan hapus setelah didistribusikan secara aman.',
+            'warning' => 'File pusat berisi secret dan kode aktivasi seluruh desa. Jangan berikan file ini ke desa; bagikan hanya enrollment_code milik desa yang sesuai.',
             'credentials' => $newCredentials
         ), $publicRoot);
     }
 
-    $pdo->beginTransaction();
-    $insert = $pdo->prepare('INSERT INTO village_installations (id, village_id, installation_code, sync_key_hash, sync_secret_hash, sync_secret_encrypted, status) VALUES (?, ?, ?, ?, ?, ?, \'active\')');
+    if (!$pdo->beginTransaction()) {
+        throw new RuntimeException('Transaksi provisioning tidak dapat dimulai.');
+    }
+    $insert = $pdo->prepare('INSERT INTO village_installations (id, village_id, installation_code, sync_key_hash, sync_secret_hash, sync_secret_encrypted, enrollment_code_hash, enrollment_expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, \'active\')');
     foreach ($plannedRows as $planned) {
         $insert->execute(array(
             $planned['id'],
@@ -369,10 +397,14 @@ try {
             $planned['installation_code'],
             $planned['sync_key_hash'],
             $planned['sync_secret_hash'],
-            $planned['sync_secret_encrypted']
+            $planned['sync_secret_encrypted'],
+            $planned['enrollment_code_hash'],
+            $planned['enrollment_expires_at']
         ));
     }
-    $pdo->commit();
+    if (!$pdo->commit()) {
+        throw new RuntimeException('Transaksi provisioning tidak dapat disimpan.');
+    }
     $credentialsCommitted = true;
     $summary['created'] = count($plannedRows);
     if ($preparedCredentialsFile !== null) {
@@ -388,7 +420,7 @@ try {
         'mode' => 'write',
         'summary' => $summary,
         'credentials_file' => $credentialsFile,
-        'message' => count($newCredentials) > 0 ? 'Kredensial baru dibuat satu kali. Distribusikan setiap baris hanya ke desa yang sesuai.' : 'Tidak ada kredensial baru yang dibuat.'
+        'message' => count($newCredentials) > 0 ? 'Kredensial dan kode aktivasi dibuat. Distribusikan hanya enrollment_code kepada desa yang sesuai.' : 'Tidak ada kredensial baru yang dibuat.'
     ), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
 } catch (Throwable $error) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
