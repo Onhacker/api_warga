@@ -7,9 +7,9 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-function load_env_file($path)
+function load_env_file($path, $override = false)
 {
-    if (!is_readable($path)) return;
+    if (!is_readable($path)) return false;
     foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         $line = trim($line);
         if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) continue;
@@ -17,8 +17,9 @@ function load_env_file($path)
         $key = trim($key);
         $value = trim($value);
         if ($value !== '' && (($value[0] === '"' && substr($value, -1) === '"') || ($value[0] === "'" && substr($value, -1) === "'"))) $value = substr($value, 1, -1);
-        if ($key !== '' && getenv($key) === false) putenv($key . '=' . $value);
+        if ($key !== '' && ($override || getenv($key) === false)) putenv($key . '=' . $value);
     }
+    return true;
 }
 
 function mask_code($code)
@@ -29,10 +30,10 @@ function mask_code($code)
 
 function usage()
 {
-    return "Gunakan: php tools/report_installations.php [--format=json|csv|text]\n";
+    return "Gunakan: php tools/report_installations.php [--format=json|csv|text] [--env=/path/.env]\n";
 }
 
-$options = getopt('', array('format::', 'help'));
+$options = getopt('', array('format::', 'env:', 'help'));
 if (isset($options['help'])) {
     fwrite(STDOUT, usage());
     exit(0);
@@ -43,7 +44,12 @@ if (!in_array($format, array('json', 'csv', 'text'), true)) {
     exit(2);
 }
 
-load_env_file(__DIR__ . '/../.env');
+$envPath = isset($options['env']) ? trim((string) (is_array($options['env']) ? end($options['env']) : $options['env'])) : '';
+if ($envPath === '') $envPath = __DIR__ . '/../.env';
+if (!load_env_file($envPath, isset($options['env']))) {
+    fwrite(STDERR, 'File .env tidak ditemukan atau tidak dapat dibaca: ' . $envPath . PHP_EOL);
+    exit(1);
+}
 $dsn = 'mysql:host=' . (getenv('DB_HOST') ?: '127.0.0.1')
     . ';port=' . (getenv('DB_PORT') ?: '3306')
     . ';dbname=' . (getenv('DB_NAME') ?: 'smartdesa_warga')

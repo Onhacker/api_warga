@@ -37,8 +37,10 @@ sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
 2. Buat credential satu desa, atau buat batch untuk desa yang siap:
 
    ```bash
-   php tools/provision_installations.php --village=95.01.03.2003
+   API_ENV=/home/USER/domains/api-warga-smartdesa.mediaverse.co.id/public_html/.env
+   php tools/provision_installations.php --village=95.01.03.2003 --env="$API_ENV"
    php tools/provision_installations.php --village=95.01.03.2003 --write \
+     --env="$API_ENV" \
      --output=/home/USER/smartdesa-private/araboda-credential.json
    ```
 
@@ -51,8 +53,9 @@ sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
 Untuk semua desa yang belum diprovision:
 
 ```bash
-php tools/provision_installations.php --all
+php tools/provision_installations.php --all --env="$API_ENV"
 php tools/provision_installations.php --all --write \
+  --env="$API_ENV" \
   --output=/home/USER/smartdesa-private/installation-credentials.json
 ```
 
@@ -63,8 +66,8 @@ file kepada satu desa. Ambil hanya baris desa yang bersangkutan.
 ## Monitoring
 
 ```bash
-php tools/report_installations.php --format=text
-php tools/report_installations.php --format=csv > /home/USER/smartdesa-private/installation-report.csv
+php tools/report_installations.php --env="$API_ENV" --format=text
+php tools/report_installations.php --env="$API_ENV" --format=csv > /home/USER/smartdesa-private/installation-report.csv
 ```
 
 Kolom `IN` menunjukkan antrean dari warga menuju laptop desa, `OUT` menunjukkan

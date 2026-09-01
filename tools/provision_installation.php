@@ -5,22 +5,30 @@
  */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
-function load_env_file($path)
+function load_env_file($path, $override = false)
 {
-    if (!is_readable($path)) return;
+    if (!is_readable($path)) return false;
     foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         $line = trim($line);
         if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) continue;
         list($key, $value) = explode('=', $line, 2);
         $key = trim($key); $value = trim($value);
         if ($value !== '' && (($value[0] === '"' && substr($value, -1) === '"') || ($value[0] === "'" && substr($value, -1) === "'"))) $value = substr($value, 1, -1);
-        if ($key !== '' && getenv($key) === false) putenv($key . '=' . $value);
+        if ($key !== '' && ($override || getenv($key) === false)) putenv($key . '=' . $value);
     }
+    return true;
 }
 
 function option_value($options, $key)
 {
     return isset($options[$key]) && is_string($options[$key]) ? trim($options[$key]) : '';
+}
+
+function raw_option_value($options, $key)
+{
+    if (!isset($options[$key])) return '';
+    $value = is_array($options[$key]) ? end($options[$key]) : $options[$key];
+    return trim((string) $value);
 }
 
 function uuid_v4()
@@ -36,15 +44,20 @@ function urlsafe_secret()
     return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
 }
 
-$options = getopt('', array('village:', 'code::', 'secret::', 'write', 'help'));
+$options = getopt('', array('village:', 'code::', 'secret::', 'write', 'env:', 'help'));
 if (isset($options['help']) || !option_value($options, 'village')) {
-    fwrite(STDOUT, "Gunakan: php tools/provision_installation.php --village=KODE-DESA [--code=KODE] [--secret=SECRET] [--write]\n");
+    fwrite(STDOUT, "Gunakan: php tools/provision_installation.php --village=KODE-DESA [--code=KODE] [--secret=SECRET] [--write] [--env=/path/.env]\n");
     fwrite(STDOUT, "Tanpa --write hanya menampilkan preview dan tidak mengubah database.\n");
     exit(isset($options['help']) ? 0 : 2);
 }
-load_env_file(__DIR__ . '/../.env');
+$envPath = raw_option_value($options, 'env');
+if ($envPath === '') $envPath = __DIR__ . '/../.env';
+if (!load_env_file($envPath, raw_option_value($options, 'env') !== '')) {
+    fwrite(STDERR, 'File .env tidak ditemukan atau tidak dapat dibaca: ' . $envPath . PHP_EOL);
+    exit(1);
+}
 $appKey = (string) getenv('APP_KEY');
-if (strlen($appKey) < 32 || stripos($appKey, 'change-before') !== false || stripos($appKey, 'ganti-dengan') !== false) { fwrite(STDERR, "APP_KEY belum aman.\n"); exit(1); }
+if (strlen($appKey) < 32 || stripos($appKey, 'change-before') !== false || stripos($appKey, 'ganti-dengan') !== false || stripos($appKey, 'replace-with') !== false) { fwrite(STDERR, 'APP_KEY belum aman pada ' . $envPath . ". Jangan mengganti APP_KEY produksi yang sudah dipakai database.\n"); exit(1); }
 $villageCode = strtoupper(option_value($options, 'village'));
 $installationCode = option_value($options, 'code') ?: 'SDW-' . strtoupper(bin2hex(random_bytes(6)));
 $secret = option_value($options, 'secret') ?: urlsafe_secret();

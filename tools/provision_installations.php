@@ -11,9 +11,9 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
-function load_env_file($path)
+function load_env_file($path, $override = false)
 {
-    if (!is_readable($path)) return;
+    if (!is_readable($path)) return false;
     foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         $line = trim($line);
         if ($line === '' || $line[0] === '#' || strpos($line, '=') === false) continue;
@@ -23,8 +23,9 @@ function load_env_file($path)
         if ($value !== '' && (($value[0] === '"' && substr($value, -1) === '"') || ($value[0] === "'" && substr($value, -1) === "'"))) {
             $value = substr($value, 1, -1);
         }
-        if ($key !== '' && getenv($key) === false) putenv($key . '=' . $value);
+        if ($key !== '' && ($override || getenv($key) === false)) putenv($key . '=' . $value);
     }
+    return true;
 }
 
 function option_values($options, $key)
@@ -166,13 +167,16 @@ Opsi:
   --write              Simpan kredensial baru ke database.
   --output=PATH        Wajib bersama --write jika ada kredensial baru;
                        path absolut, di luar public_html, permission 0600.
+  --env=PATH           File .env produksi yang dipakai. Gunakan bila tool
+                       dijalankan dari repository dan .env produksi berada
+                       di document root deployment.
   --help                Tampilkan bantuan.
 
 Tanpa --write, database tidak diubah dan secret tidak dibuat.
 TEXT;
 }
 
-$options = getopt('', array('all', 'village:', 'write', 'output:', 'help'));
+$options = getopt('', array('all', 'village:', 'write', 'output:', 'env:', 'help'));
 if (isset($options['help'])) {
     fwrite(STDOUT, usage() . PHP_EOL);
     exit(0);
@@ -191,10 +195,15 @@ if ($all && count($villageCodes) > 0) {
     exit(2);
 }
 
-load_env_file(__DIR__ . '/../.env');
+$envPath = raw_option_value($options, 'env');
+if ($envPath === '') $envPath = __DIR__ . '/../.env';
+if (!load_env_file($envPath, raw_option_value($options, 'env') !== '')) {
+    fwrite(STDERR, 'File .env tidak ditemukan atau tidak dapat dibaca: ' . $envPath . PHP_EOL);
+    exit(1);
+}
 $appKey = trim((string) getenv('APP_KEY'));
 if (strlen($appKey) < 32 || preg_match('/(change-before|ganti-dengan|replace-with)/i', $appKey)) {
-    fwrite(STDERR, "APP_KEY belum aman.\n");
+    fwrite(STDERR, 'APP_KEY belum aman pada ' . $envPath . ". Jangan mengganti APP_KEY produksi yang sudah dipakai database.\n");
     exit(1);
 }
 if (!function_exists('openssl_encrypt')) {
