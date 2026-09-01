@@ -155,6 +155,20 @@ class MY_Controller extends CI_Controller
         return $installation;
     }
 
+    /**
+     * Catat aktivitas instalasi tanpa pernah mengubah scope desanya.
+     * last_seen_at dicatat saat autentikasi; last_sync_at hanya dicatat
+     * setelah endpoint sinkronisasi berhasil memproses permintaan.
+     */
+    protected function touch_installation($synced = FALSE)
+    {
+        if (getenv('API_DEMO_MODE') === '1' || empty($this->installation['id']) || !isset($this->db)) return;
+        $now = date('Y-m-d H:i:s');
+        $data = array('last_seen_at' => $now);
+        if ($synced) $data['last_sync_at'] = $now;
+        $this->db->where('id', $this->installation['id'])->update('village_installations', $data);
+    }
+
     protected function decrypt_secret($encoded)
     {
         $packed = base64_decode((string) $encoded, TRUE);
