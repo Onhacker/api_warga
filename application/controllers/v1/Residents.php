@@ -42,6 +42,15 @@ class Residents extends MY_Controller
             return $this->fail('Data identitas tidak cocok dengan kampung yang dipilih.', 422, 'resident_not_found');
         }
 
+        // A new village is not searchable until its first full snapshot arrives.
+        // An empty, completed snapshot is valid and still uses normal matching.
+        $snapshot = $this->db->select('id')
+            ->where(array('village_id' => $village['id'], 'finalized' => 1))
+            ->limit(1)->get('village_resident_snapshots')->row_array();
+        if (!$snapshot) {
+            return $this->fail('Data penduduk kampung belum selesai tersinkron ke layanan warga.', 503, 'resident_directory_unavailable');
+        }
+
         $row = $this->db->where(array(
                 'village_id' => $village['id'],
                 'nik_hash' => $this->identity_hash($nik),

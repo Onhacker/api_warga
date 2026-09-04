@@ -21,6 +21,19 @@ require BASEPATH . 'core/Model.php';
 require BASEPATH . 'database/DB.php';
 require APPPATH . 'helpers/api_helper.php';
 require APPPATH . 'models/Sync_model.php';
+// Exercise the real verification controller without starting an HTTP server.
+class MY_Controller
+{
+    public $payload = array();
+    protected function require_method($method) { return TRUE; }
+    protected function read_json() { return $this->payload; }
+    protected function respond($data) { return $data; }
+    protected function fail($message, $status, $code)
+    {
+        return array('success' => FALSE, 'error' => $code, 'http_status' => $status);
+    }
+}
+require APPPATH . 'controllers/v1/Residents.php';
 require $pwa . '/application/helpers/warga_helper.php';
 require $pwa . '/application/models/Auth_model.php';
 require $pwa . '/application/models/Request_model.php';
@@ -55,6 +68,15 @@ function push_message($model, $installation, $type, $operation, $payload, $aggre
         'aggregate_type' => $type, 'aggregate_id' => $aggregate ?: 'catalog-' . str_repeat('a', 48),
         'operation' => $operation, 'payload' => $payload
     )));
+}
+function verify_resident($db, $sync, array $identity)
+{
+    $controller = new Residents();
+    $controller->db = $db;
+    $controller->Sync_model = $sync;
+    $controller->load = new class { public function model($name) {} };
+    $controller->payload = $identity;
+    return $controller->verify();
 }
 $socket = getenv('SMARTDESA_TEST_DB_SOCKET') ?: NULL;
 $host = $socket ? 'localhost' : (getenv('SMARTDESA_TEST_DB_HOST') ?: '127.0.0.1');
@@ -131,7 +153,27 @@ try {
     $snapshot = array('snapshot_id' => hash('sha256', 'snapshot-a'), 'snapshot_created_at' => date('c', time() - 10),
         'batch_index' => 1, 'batch_total' => 1, 'residents' => array(array('source_key' => $source,
             'nik' => '9501010101010001', 'kk' => '9501010101010002', 'name' => 'Test Citizen')));
+    $identity = array('village_code' => '95.01.03.2009', 'nik' => '9501010101010001', 'kk' => '9501010101010002', 'name' => 'Test Citizen');
+    $verification = verify_resident($db, $sync, $identity);
+    check($verification['error'] === 'resident_directory_unavailable' && $verification['http_status'] === 503,
+        'missing snapshot reports unsynced directory instead of identity mismatch');
+    $partial = $snapshot;
+    $partial['batch_total'] = 2;
+    check(push_message($sync, $other, 'resident_directory', 'snapshot', $partial)['accepted'] === 1, 'first partial batch accepted');
+    $otherIdentity = $identity;
+    $otherIdentity['village_code'] = '95.01.03.2003';
+    check(verify_resident($db, $sync, $otherIdentity)['error'] === 'resident_directory_unavailable',
+        'partial first snapshot does not claim registration directory is ready');
     check(push_message($sync, $installation, 'resident_directory', 'snapshot', $snapshot, 'resident-' . str_repeat('a', 78))['accepted'] === 1, 'API accepts long resident snapshot key');
+    check(!empty(verify_resident($db, $sync, $identity)['success']), 'matching identity is verified after complete snapshot');
+    check(verify_resident($db, $sync, $otherIdentity)['error'] === 'resident_directory_unavailable',
+        'completed snapshot does not make another village ready');
+    $wrongIdentity = $identity;
+    $wrongIdentity['name'] = 'Different Name';
+    check(verify_resident($db, $sync, $wrongIdentity)['error'] === 'resident_not_found', 'incorrect name remains rejected');
+    $wrongIdentity = $identity;
+    $wrongIdentity['kk'] = '9501010101010003';
+    check(verify_resident($db, $sync, $wrongIdentity)['error'] === 'resident_not_found', 'incorrect household number remains rejected');
     $directory = $db->where('village_id', $installation['village_id'])->get('village_resident_directory')->row_array();
     check($directory['birth_date'] === NULL, 'missing birth date is stored as NULL in strict MariaDB');
     check(strlen($directory['nik_hash']) === 64 && $directory['nik_hash'] !== $snapshot['residents'][0]['nik'], 'central resident directory stores hashed identity');
@@ -191,6 +233,8 @@ try {
     $empty['snapshot_created_at'] = date('c');
     $empty['residents'] = array();
     check(push_message($sync, $installation, 'resident_directory', 'snapshot', $empty)['accepted'] === 1, 'new empty snapshot accepted');
+    check(verify_resident($db, $sync, $identity)['error'] === 'resident_not_found',
+        'completed empty directory rejects removed resident without claiming sync is missing');
     check(!$auth->citizen_is_verified(1) && empty($requests->create($citizen, $data)['success']), 'removed resident cannot make new requests');
     push_message($sync, $installation, 'resident_directory', 'snapshot', $snapshot);
     check(!$auth->citizen_is_verified(1), 'late older snapshot cannot reactivate removed resident');
