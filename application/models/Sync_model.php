@@ -784,7 +784,7 @@ class Sync_model extends CI_Model
             $allowed = $fromStatus === 'submitted' && in_array($toStatus, array('verified', 'revision', 'rejected'), TRUE);
         } elseif (in_array($actorRole, array('kepala-desa', 'kades'), TRUE)) {
             $allowed = $fromStatus === 'verified' && in_array($toStatus, array('approved', 'revision', 'rejected'), TRUE);
-        } elseif (in_array($actorRole, array('admin-desa', 'administrator', 'admin-pusat'), TRUE)) {
+        } elseif (in_array($actorRole, array('admin-desa', 'administrator', 'admin-pusat', 'pelayanan-surat'), TRUE)) {
             $allowed = ($fromStatus === 'submitted' && in_array($toStatus, array('verified', 'revision', 'rejected'), TRUE))
                 || ($fromStatus === 'verified' && in_array($toStatus, array('approved', 'revision', 'rejected'), TRUE))
                 || ($fromStatus === 'approved' && in_array($toStatus, array('revision', 'rejected'), TRUE));

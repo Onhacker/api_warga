@@ -224,7 +224,7 @@ try {
     check($sync->pull($other) === array(), 'other village cannot pull this request');
     check($sync->acknowledge($installation, array(array('id' => $messages[0]['id'], 'status' => 'processed'))) === 1, 'local acknowledgement commits delivery');
     foreach (array('verified', 'approved') as $status) {
-        check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => $status, 'actor_role' => 'administrator'), $requestId)['accepted'] === 1, 'status advances to ' . $status);
+        check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => $status, 'actor_role' => 'pelayanan-surat'), $requestId)['accepted'] === 1, 'Pelayanan Surat advances status to ' . $status);
     }
     check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => 'issued', 'actor_role' => 'administrator'), $requestId)['rejected'] === 1, 'issued status requires official PDF endpoint');
     check(push_message($sync, $other, 'service_request', 'status_update', array('status' => 'rejected', 'actor_role' => 'administrator', 'note' => 'Test'), $requestId)['rejected'] === 1, 'another village cannot change request status');
