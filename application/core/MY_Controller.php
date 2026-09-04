@@ -20,6 +20,10 @@ class MY_Controller extends CI_Controller
             exit;
         }
         $limit = max(1024, (int) (getenv('API_MAX_BODY_BYTES') ?: 2097152));
+        if (preg_match('#/v1/requests/[a-f0-9-]{36}/official-document/?$#i', $this->request_path())) {
+            $documentLimit = (int) (getenv('API_OFFICIAL_DOCUMENT_MAX_BYTES') ?: 8388608);
+            $limit = max($limit, min(16 * 1024 * 1024, $documentLimit));
+        }
         $contentLength = isset($_SERVER['CONTENT_LENGTH']) ? (int) $_SERVER['CONTENT_LENGTH'] : 0;
         if ($contentLength > $limit) {
             $this->fail('Ukuran permintaan terlalu besar.', 413, 'payload_too_large');
@@ -42,7 +46,7 @@ class MY_Controller extends CI_Controller
             // OPTIONS exits before CodeIgniter flushes its output object.
             header('Access-Control-Allow-Origin: ' . $origin);
             header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-            header('Access-Control-Allow-Headers: Content-Type, X-SmartDesa-Installation, X-SmartDesa-Timestamp, X-SmartDesa-Nonce, X-SmartDesa-Signature, X-SmartDesa-Auto-Key, X-SmartDesa-Auto-Timestamp, X-SmartDesa-Auto-Nonce, X-SmartDesa-Auto-Signature');
+            header('Access-Control-Allow-Headers: Content-Type, X-SmartDesa-Installation, X-SmartDesa-Timestamp, X-SmartDesa-Nonce, X-SmartDesa-Signature, X-SmartDesa-Auto-Key, X-SmartDesa-Auto-Timestamp, X-SmartDesa-Auto-Nonce, X-SmartDesa-Auto-Signature, X-SmartDesa-Document-SHA256, X-SmartDesa-Document-Name, X-SmartDesa-Document-Reference, X-SmartDesa-Actor-Name');
             header('Vary: Origin');
         }
     }

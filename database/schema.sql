@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS citizen_profiles (
   user_id BIGINT UNSIGNED NOT NULL UNIQUE,
   village_id CHAR(36) NOT NULL,
   local_citizen_uuid CHAR(36) NULL,
+  local_citizen_key VARCHAR(120) NULL,
   nik_hash CHAR(64) NULL,
+  name_hash CHAR(64) NULL,
   nik_encrypted VARBINARY(512) NULL,
   kk_hash CHAR(64) NULL,
   birth_date DATE NULL,
@@ -65,8 +67,68 @@ CREATE TABLE IF NOT EXISTS citizen_profiles (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_citizen_village (village_id, verification_status),
   KEY idx_citizen_nik_hash (nik_hash),
+  UNIQUE KEY uniq_citizen_source (village_id, local_citizen_key),
   CONSTRAINT fk_citizen_profile_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_citizen_profile_village FOREIGN KEY (village_id) REFERENCES village_tenants(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Privacy-minimized directory published by each local SmartDesa instance.
+-- Raw NIK/No. KK values are never stored in this table.
+CREATE TABLE IF NOT EXISTS village_resident_directory (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  village_id CHAR(36) NOT NULL,
+  local_citizen_key VARCHAR(120) NOT NULL,
+  nik_hash CHAR(64) NOT NULL,
+  kk_hash CHAR(64) NOT NULL,
+  name_hash CHAR(64) NOT NULL,
+  display_name VARCHAR(160) NOT NULL,
+  birth_date DATE NULL,
+  gender VARCHAR(20) NULL,
+  snapshot_id CHAR(64) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  last_seen_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_resident_source (village_id, local_citizen_key),
+  UNIQUE KEY uniq_resident_nik (village_id, nik_hash),
+  KEY idx_resident_match (village_id, nik_hash, kk_hash, status),
+  KEY idx_resident_snapshot (village_id, snapshot_id, status),
+  CONSTRAINT fk_resident_directory_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS village_resident_snapshots (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  village_id CHAR(36) NOT NULL,
+  snapshot_id CHAR(64) NOT NULL,
+  snapshot_created_at DATETIME NOT NULL,
+  batch_total INT UNSIGNED NOT NULL DEFAULT 1,
+  finalized TINYINT(1) NOT NULL DEFAULT 0,
+  finalized_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_resident_snapshot (village_id, snapshot_id),
+  KEY idx_resident_snapshot_latest (village_id, snapshot_created_at),
+  CONSTRAINT fk_resident_snapshot_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS village_resident_snapshot_batches (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  village_id CHAR(36) NOT NULL,
+  snapshot_id CHAR(64) NOT NULL,
+  batch_index INT UNSIGNED NOT NULL,
+  batch_total INT UNSIGNED NOT NULL,
+  resident_count INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_resident_snapshot_batch (village_id, snapshot_id, batch_index),
+  KEY idx_resident_batch_snapshot (village_id, snapshot_id),
+  CONSTRAINT fk_resident_batch_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS resident_verification_attempts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ip_hash CHAR(64) NOT NULL,
+  attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_resident_attempt_ip (ip_hash, attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS service_types (
@@ -85,16 +147,47 @@ CREATE TABLE IF NOT EXISTS service_types (
   KEY idx_service_types_active (is_active, sort_order, name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Per-village publication of the local SmartDesa Master Surat catalogue.
+-- The form schema is declarative JSON stored as LONGTEXT for MariaDB
+-- compatibility across the supported hosting versions.
+CREATE TABLE IF NOT EXISTS village_service_catalog (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  village_id CHAR(36) NOT NULL,
+  service_key VARCHAR(80) NOT NULL,
+  name VARCHAR(180) NOT NULL,
+  short_name VARCHAR(100) NOT NULL,
+  icon VARCHAR(80) NOT NULL DEFAULT 'fa-file-alt',
+  description VARCHAR(1000) NULL,
+  requirements_json LONGTEXT NULL,
+  form_schema_json LONGTEXT NULL,
+  template_key VARCHAR(120) NULL,
+  schema_version INT UNSIGNED NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  source_updated_at DATETIME NULL,
+  published_at DATETIME NULL,
+  source_hash CHAR(64) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_village_service_key (village_id, service_key),
+  KEY idx_village_service_active (village_id, is_active, sort_order),
+  CONSTRAINT fk_village_service_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS service_requests (
   id CHAR(36) NOT NULL PRIMARY KEY,
   request_code VARCHAR(50) NOT NULL UNIQUE,
   citizen_user_id BIGINT UNSIGNED NOT NULL,
   village_id CHAR(36) NOT NULL,
   service_type_id INT UNSIGNED NOT NULL,
+  catalog_service_id BIGINT UNSIGNED NULL,
+  form_schema_version INT UNSIGNED NULL,
   status VARCHAR(30) NOT NULL DEFAULT 'submitted',
   payload_json JSON NOT NULL,
   local_reference VARCHAR(160) NULL,
   document_path VARCHAR(500) NULL,
+  document_sha256 CHAR(64) NULL,
+  document_size BIGINT UNSIGNED NULL,
   local_sync_status VARCHAR(30) NOT NULL DEFAULT 'pending',
   local_synced_at DATETIME NULL,
   submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -102,6 +195,7 @@ CREATE TABLE IF NOT EXISTS service_requests (
   KEY idx_requests_citizen (citizen_user_id, submitted_at),
   KEY idx_requests_village_status (village_id, status, submitted_at),
   KEY idx_requests_sync (village_id, local_sync_status, updated_at),
+  KEY idx_requests_catalog (catalog_service_id),
   CONSTRAINT fk_requests_citizen FOREIGN KEY (citizen_user_id) REFERENCES users(id),
   CONSTRAINT fk_requests_village FOREIGN KEY (village_id) REFERENCES village_tenants(id),
   CONSTRAINT fk_requests_service FOREIGN KEY (service_type_id) REFERENCES service_types(id)
@@ -123,6 +217,7 @@ CREATE TABLE IF NOT EXISTS request_status_history (
 CREATE TABLE IF NOT EXISTS request_documents (
   id CHAR(36) NOT NULL PRIMARY KEY,
   request_id CHAR(36) NOT NULL,
+  field_key VARCHAR(100) NULL,
   original_name VARCHAR(180) NOT NULL,
   stored_name VARCHAR(220) NOT NULL,
   storage_path VARCHAR(600) NOT NULL,
@@ -131,6 +226,7 @@ CREATE TABLE IF NOT EXISTS request_documents (
   uploaded_by BIGINT UNSIGNED NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_request_documents (request_id, created_at),
+  KEY idx_request_documents_field (request_id, field_key),
   CONSTRAINT fk_request_documents_request FOREIGN KEY (request_id) REFERENCES service_requests(id) ON DELETE CASCADE,
   CONSTRAINT fk_request_documents_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -190,7 +286,7 @@ CREATE TABLE IF NOT EXISTS sync_messages (
   village_id CHAR(36) NOT NULL,
   installation_id CHAR(36) NULL,
   aggregate_type VARCHAR(80) NOT NULL,
-  aggregate_id CHAR(36) NOT NULL,
+  aggregate_id VARCHAR(120) NOT NULL,
   direction VARCHAR(30) NOT NULL,
   operation VARCHAR(30) NOT NULL,
   payload_json JSON NOT NULL,

@@ -19,6 +19,7 @@ POST /v1/sync/pull
 POST /v1/sync/push
 POST /v1/sync/ack
 GET  /v1/documents/{document-id}
+POST /v1/requests/{request-id}/official-document
 ```
 
 `/v1/health` tidak membutuhkan kredensial. Endpoint sinkronisasi dan dokumen memakai header berikut:
@@ -41,6 +42,11 @@ Endpoint dokumen juga wajib memakai header HMAC yang sama. ID dokumen harus bera
 metadata permohonan yang diterima SmartDesa; API memeriksa desa pemilik sebelum membaca
 berkas dari `PRIVATE_STORAGE_PATH`.
 
+Endpoint `official-document` menerima PDF resmi setelah permohonan berstatus `approved`.
+Isi PDF, hash SHA-256, desa pemilik, dan identitas permohonan diverifikasi sebelum status
+berubah menjadi `issued`. Pengiriman ulang PDF yang sama bersifat idempotent; PDF berbeda
+untuk permohonan yang sudah terbit ditolak.
+
 `/v1/installations/auto-enroll` adalah endpoint bootstrap installer universal. Endpoint
 ini memakai header HMAC terpisah berikut dan hanya aktif bila sengaja dikonfigurasi pada
 server pusat:
@@ -59,12 +65,24 @@ tidak pernah dikirim ke browser.
 
 ## Deployment
 
+Untuk deployment rutin di Hostinger setelah instalasi awal, jalankan satu perintah berikut
+dari repository API. Skrip mempertahankan `.env`, upload, log, dan data runtime; membuat
+backup database; menjalankan migrasi `006` sampai `010`; lalu memeriksa health API.
+
+```bash
+cd "$HOME/repositories/api_warga"
+bash scripts/deploy-hostinger.sh
+```
+
 1. Buat database `smartdesa_warga`, impor `database/schema.sql`, lalu `database/seed.sql` dari proyek PWA.
-2. Jika database lama, impor `database/migrations/001_sync_auth.sql`, `database/migrations/002_set_araboda_official.sql`, `database/migrations/003_seed_jayawijaya_villages.sql`, `database/migrations/004_installation_enrollment.sql`, lalu `database/migrations/005_auto_enrollment.sql` sesuai urutan.
+2. Jika database lama, impor semua berkas `database/migrations/001_*.sql` sampai
+   `database/migrations/010_*.sql` sesuai urutan. Migrasi `009` menambahkan metadata PDF resmi,
+   sedangkan `010` memperpanjang `sync_messages.aggregate_id` untuk katalog dan snapshot penduduk.
 3. Upload isi folder ini ke document root `api-warga-smartdesa.mediaverse.co.id`.
 4. Salin `.env.example` menjadi `.env`, isi `APP_KEY`, database, dan `WARGA_ALLOWED_ORIGIN`.
-5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat dibaca PHP,
-   dan gunakan path yang sama dengan PWA warga bila keduanya berbagi storage.
+5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat ditulis PHP,
+   dan gunakan path absolut yang sama pada API serta PWA. PDF resmi ditulis API dan dibaca
+   PWA langsung dari folder privat ini.
 6. Pastikan `API_DEMO_MODE=0` sebelum dipakai desa.
 7. Pastikan data wilayah telah diimpor. Seed dan migrasi `003` memuat 332 kampung/kelurahan pada 40 distrik di Kabupaten Jayawijaya.
 8. Buat satu baris `village_installations` per instalasi desa. Jika tool dijalankan dari repository, arahkan ke `.env` deployment secara eksplisit. Contoh Hostinger: `API_ENV=/home/USER/domains/api-warga-smartdesa.mediaverse.co.id/public_html/.env`. Untuk seluruh desa aktif, jalankan `php tools/provision_installations.php --all --env="$API_ENV"` sebagai preview, kemudian ulangi dengan `--write` dan `--output` privat di luar `public_html`. File kredensial hanya untuk pemulihan oleh pengelola pusat dan tidak dibagikan kepada desa.
@@ -81,7 +99,27 @@ tidak pernah dikirim ke browser.
 10. Bangun satu installer SmartDesa universal. Saat Administrator membuka modul Permohonan Warga dan internet tersedia, backend lokal membaca kode kampung dari Identitas Kampung, melakukan handshake HMAC, menyimpan kredensial khusus kampung, lalu menghapus bootstrap dari `.env` lokal. Tidak ada kode atau pengaturan API yang perlu diketik oleh desa.
 11. `tools/issue_enrollment_codes.php` dan endpoint `/v1/installations/enroll` dipertahankan hanya sebagai jalur pemulihan instalasi lama. Jangan gunakan alur pembagian kode untuk pemasangan normal.
 12. Pantau cakupan dan aktivitas tanpa membuka secret dengan `php tools/report_installations.php --env="$API_ENV" --format=text` atau `--format=csv`. Status `last_seen_at` diperbarui setiap permintaan bertanda tangan dan `last_sync_at` setelah pull/push/ack berhasil.
-13. Uji `GET /v1/health`, koneksi otomatis satu desa pilot, pemutusan bootstrap lokal, lalu pull/push sebelum merilis installer ke seluruh desa.
+13. Uji `GET /v1/health`, koneksi otomatis satu desa pilot, pemutusan bootstrap lokal,
+    katalog layanan, verifikasi penduduk, pull/push, serta penerbitan dan unduh PDF sebelum
+    merilis installer ke seluruh desa.
+
+Tes regresi penerbitan dapat dijalankan pada mesin pengembangan yang memiliki MariaDB:
+
+```bash
+SMARTDESA_TEST_DB_SOCKET=/path/to/mysql.sock \
+SMARTDESA_TEST_DB_USER=test-user \
+SMARTDESA_TEST_DB_PASS=test-password \
+php tools/tests/official_documents.php
+```
+
+Tes selalu membuat database bernama acak dan menghapusnya kembali. Jangan arahkan user tes
+ke kredensial produksi yang memiliki hak di luar kebutuhan pengujian.
+
+`tools/tests/workflow_integration.php` menguji migrasi berulang, katalog lintas desa,
+direktori penduduk, pembuatan permohonan melalui model PWA, dan alur status. Source PWA
+dibaca dari folder sejajar `smartdesa-warga`; atur `SMARTDESA_TEST_PWA_PATH` jika berbeda.
+Gunakan variabel koneksi database tes yang sama seperti perintah di atas. Autentikasi HTTP
+dan unggah berkas nyata tetap harus diuji pada lingkungan pilot.
 
 ### Model multi-desa
 

@@ -7,7 +7,7 @@ DirectoryIndex index.php
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule ^(?:application|database|system|storage|vendor|tools)(?:/|$) - [F,L]
+    RewriteRule ^(?:application|database|scripts|system|storage|vendor|tools)(?:/|$) - [F,L]
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^(.*)$ index.php/$1 [L,QSA]
