@@ -25,6 +25,7 @@ class MY_Controller
     protected function respond($data) { return $data; }
 }
 require APPPATH . 'helpers/api_helper.php';
+require APPPATH . 'libraries/Official_letter_html.php';
 require BASEPATH . 'database/DB.php';
 require APPPATH . 'models/Sync_model.php';
 require APPPATH . 'controllers/v1/Requests.php';
@@ -76,6 +77,9 @@ try {
     $migration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/009_official_documents.sql');
     sql_batch($admin, $migration);
     sql_batch($admin, $migration);
+    $htmlMigration = file_get_contents(dirname(__DIR__, 2) . '/database/migrations/011_official_html.sql');
+    sql_batch($admin, $htmlMigration);
+    sql_batch($admin, $htmlMigration);
     check($admin->query("SHOW COLUMNS FROM service_requests LIKE 'document_sha256'")->num_rows === 1, 'migration 009 is repeatable');
 
     $db = DB(array('hostname' => $socket ?: $host, 'username' => $user, 'password' => $password,
@@ -131,6 +135,18 @@ try {
     $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_SHA256'] = hash('sha256', $controller->rawBody);
     check(empty($controller->official_document($requests[0])['success']), 'issued request cannot replace official PDF');
     check(file_get_contents($row['document_path']) === $body, 'rejected replacement preserves original PDF');
+    $html = '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'"><style>body{font:12pt Arial}</style></head><body><main>Surat HTML test</main></body></html>';
+    $controller->rawBody = $html;
+    $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_SHA256'] = hash('sha256', $html);
+    $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_NAME'] = rtrim(strtr(base64_encode('surat-test.html'), '+/', '-_'), '=');
+    $upgrade = $controller->official_html($requests[0]);
+    check(!empty($upgrade['success']) && $upgrade['format'] === 'html', 'issued PDF can be upgraded to HTML');
+    $upgraded = $db->where('id', $requests[0])->get('service_requests')->row_array();
+    check($upgraded['document_format'] === 'html' && file_get_contents($upgraded['document_path']) === $html
+        && !is_file($row['document_path']), 'HTML upgrade replaces metadata and removes previous PDF');
+    check($db->count_all('notifications') === 1 && $db->count_all('request_status_history') === 1, 'HTML upgrade does not duplicate notification or history');
+    $upgradeAgain = $controller->official_html($requests[0]);
+    check(!empty($upgradeAgain['success']) && !empty($upgradeAgain['duplicate']), 'same HTML retry is idempotent');
     $controller->rawBody = '<html>not a PDF</html>';
     check($controller->official_document($requests[3])['error_code'] === 'invalid_document', 'non-PDF rejected');
     $controller->rawBody = $body;

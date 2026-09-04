@@ -2,11 +2,21 @@
 defined('BASEPATH') OR exit('No direct script access allowed');
 
 /**
- * Penerbitan PDF resmi dari instalasi SmartDesa lokal.
+ * Penerbitan snapshot surat resmi dari instalasi SmartDesa lokal.
  */
 class Requests extends MY_Controller
 {
     public function official_document($requestId = '')
+    {
+        return $this->receive_official_document($requestId, 'pdf');
+    }
+
+    public function official_html($requestId = '')
+    {
+        return $this->receive_official_document($requestId, 'html');
+    }
+
+    private function receive_official_document($requestId, $format)
     {
         if (!$this->require_method('POST')) return;
         $installation = $this->authenticate_installation();
@@ -19,15 +29,23 @@ class Requests extends MY_Controller
         $maxBytes = max(1024, min(16 * 1024 * 1024, (int) (getenv('API_OFFICIAL_DOCUMENT_MAX_BYTES') ?: 8388608)));
         $size = strlen($this->rawBody);
         $sha256 = strtolower(trim(api_header('X-SmartDesa-Document-SHA256')));
-        if ($size < 5 || $size > $maxBytes || strncmp($this->rawBody, '%PDF-', 5) !== 0) {
-            return $this->fail('Berkas harus berupa PDF resmi dengan ukuran yang diizinkan.', 415, 'invalid_document');
+        if ($size < 5 || $size > $maxBytes) {
+            return $this->fail('Ukuran dokumen resmi tidak diizinkan.', 415, 'invalid_document');
+        }
+        if ($format === 'html') {
+            require_once APPPATH . 'libraries/Official_letter_html.php';
+            if (!Official_letter_html::valid($this->rawBody)) {
+                return $this->fail('HTML surat harus mandiri, tanpa skrip atau tautan eksternal.', 415, 'invalid_document');
+            }
+        } elseif (strncmp($this->rawBody, '%PDF-', 5) !== 0) {
+            return $this->fail('Berkas PDF resmi tidak valid.', 415, 'invalid_document');
         }
         if (!preg_match('/^[a-f0-9]{64}$/', $sha256) || !hash_equals($sha256, hash('sha256', $this->rawBody))) {
             return $this->fail('Hash dokumen resmi tidak sesuai.', 422, 'invalid_document_hash');
         }
 
         $reference = $this->decode_header_value('X-SmartDesa-Document-Reference', 160);
-        $filename = $this->safe_pdf_name($this->decode_header_value('X-SmartDesa-Document-Name', 180), $requestId);
+        $filename = $this->safe_document_name($this->decode_header_value('X-SmartDesa-Document-Name', 180), $requestId, $format);
         $actorName = $this->decode_header_value('X-SmartDesa-Actor-Name', 160);
         if ($reference === '') return $this->fail('Nomor surat resmi belum tersedia.', 422, 'missing_reference');
 
@@ -53,16 +71,16 @@ class Requests extends MY_Controller
             return $this->fail('Dokumen sedang diterbitkan. Coba kembali sebentar lagi.', 425, 'document_busy');
         }
         try {
-            return $this->store_official_document($installation, $requestId, $reference, $filename, $actorName, $sha256, $size, $realDirectory);
+            return $this->store_official_document($installation, $requestId, $reference, $filename, $actorName, $sha256, $size, $realDirectory, $format);
         } finally {
             flock($lock, LOCK_UN);
             fclose($lock);
         }
     }
 
-    private function store_official_document($installation, $requestId, $reference, $filename, $actorName, $sha256, $size, $realDirectory)
+    private function store_official_document($installation, $requestId, $reference, $filename, $actorName, $sha256, $size, $realDirectory, $format)
     {
-        $target = $realDirectory . DIRECTORY_SEPARATOR . $requestId . '-' . substr($sha256, 0, 16) . '.pdf';
+        $target = $realDirectory . DIRECTORY_SEPARATOR . $requestId . '-' . substr($sha256, 0, 16) . '.' . $format;
         if (is_link($target)) return $this->fail('Lokasi dokumen resmi tidak valid.', 503, 'storage_unavailable');
         $targetExisted = is_file($target);
         $temporary = $target . '.tmp-' . bin2hex(random_bytes(6));
@@ -80,11 +98,21 @@ class Requests extends MY_Controller
             $target,
             $sha256,
             $size,
-            $actorName
+            $actorName,
+            $format
         );
         if (empty($result['success'])) {
             if (!$targetExisted) @unlink($target);
             return $this->fail(isset($result['message']) ? $result['message'] : 'Dokumen resmi belum dapat diterbitkan.', 409, 'document_not_published');
+        }
+
+        // Retire only the previous PDF of this request after its HTML is committed.
+        $previous = isset($result['replaced_path']) ? (string) $result['replaced_path'] : '';
+        $previousReal = $previous !== '' ? realpath($previous) : FALSE;
+        if ($format === 'html' && $previousReal !== FALSE && !is_link($previous)
+            && dirname($previousReal) === $realDirectory
+            && strtolower(pathinfo($previousReal, PATHINFO_EXTENSION)) === 'pdf') {
+            if (!@unlink($previousReal)) log_message('error', 'Previous official document cleanup failed for request ' . $requestId);
         }
 
         $this->touch_installation(TRUE);
@@ -95,6 +123,7 @@ class Requests extends MY_Controller
             'reference' => $reference,
             'filename' => $filename,
             'sha256' => $sha256,
+            'format' => $format,
             'duplicate' => !empty($result['duplicate']),
             'message' => isset($result['message']) ? $result['message'] : 'Dokumen resmi berhasil diterbitkan.'
         ));
@@ -114,12 +143,12 @@ class Requests extends MY_Controller
             : substr($value, 0, (int) $maxLength);
     }
 
-    private function safe_pdf_name($name, $requestId)
+    private function safe_document_name($name, $requestId, $format)
     {
         $name = basename(str_replace('\\', '/', (string) $name));
         $name = trim((string) preg_replace('/[^A-Za-z0-9._-]+/', '_', $name), '._-');
         if ($name === '') $name = 'surat-' . substr(str_replace('-', '', $requestId), 0, 12);
-        if (!preg_match('/\.pdf$/i', $name)) $name .= '.pdf';
-        return substr($name, 0, 180);
+        $name = preg_replace('/\.(?:pdf|html?)$/i', '', $name);
+        return substr($name, 0, 174) . '.' . $format;
     }
 }

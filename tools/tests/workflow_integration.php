@@ -100,7 +100,7 @@ try {
         ALTER TABLE citizen_profiles DROP INDEX uniq_citizen_source, DROP COLUMN local_citizen_key, DROP COLUMN name_hash;
         ALTER TABLE sync_messages MODIFY aggregate_id CHAR(36) NOT NULL;');
     for ($pass = 0; $pass < 2; $pass++) {
-        foreach (array('006_service_catalog', '007_resident_directory', '008_unique_citizen_source', '009_official_documents', '010_sync_aggregate_keys') as $migration) {
+        foreach (array('006_service_catalog', '007_resident_directory', '008_unique_citizen_source', '009_official_documents', '010_sync_aggregate_keys', '011_official_html') as $migration) {
             $apiSql = file_get_contents($root . '/database/migrations/' . $migration . '.sql');
             check($apiSql === file_get_contents($pwa . '/database/migrations/' . $migration . '.sql'), "API/PWA migration $migration matches (pass $pass)");
             sql_batch($admin, $apiSql);
@@ -226,7 +226,7 @@ try {
     foreach (array('verified', 'approved') as $status) {
         check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => $status, 'actor_role' => 'pelayanan-surat'), $requestId)['accepted'] === 1, 'Pelayanan Surat advances status to ' . $status);
     }
-    check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => 'issued', 'actor_role' => 'administrator'), $requestId)['rejected'] === 1, 'issued status requires official PDF endpoint');
+    check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => 'issued', 'actor_role' => 'administrator'), $requestId)['rejected'] === 1, 'issued status requires an official document endpoint');
     check(push_message($sync, $other, 'service_request', 'status_update', array('status' => 'rejected', 'actor_role' => 'administrator', 'note' => 'Test'), $requestId)['rejected'] === 1, 'another village cannot change request status');
     $empty = $snapshot;
     $empty['snapshot_id'] = hash('sha256', 'snapshot-empty');

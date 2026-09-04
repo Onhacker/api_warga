@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS service_requests (
   document_path VARCHAR(500) NULL,
   document_sha256 CHAR(64) NULL,
   document_size BIGINT UNSIGNED NULL,
+  document_format VARCHAR(10) NOT NULL DEFAULT 'pdf',
   local_sync_status VARCHAR(30) NOT NULL DEFAULT 'pending',
   local_synced_at DATETIME NULL,
   submitted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

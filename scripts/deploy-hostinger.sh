@@ -96,13 +96,14 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
     --single-transaction --skip-lock-tables "$database_name" >"$backup_file"
 chmod 600 "$backup_file"
 
-printf 'Menjalankan migrasi database 006 sampai 010...\n'
+printf 'Menjalankan migrasi database 006 sampai 011...\n'
 for migration in \
     006_service_catalog \
     007_resident_directory \
     008_unique_citizen_source \
     009_official_documents \
-    010_sync_aggregate_keys
+    010_sync_aggregate_keys \
+    011_official_html
 do
     migration_file="$API_REPO/database/migrations/$migration.sql"
     if [[ ! -f "$migration_file" ]]; then

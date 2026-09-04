@@ -20,7 +20,7 @@ class MY_Controller extends CI_Controller
             exit;
         }
         $limit = max(1024, (int) (getenv('API_MAX_BODY_BYTES') ?: 2097152));
-        if (preg_match('#/v1/requests/[a-f0-9-]{36}/official-document/?$#i', $this->request_path())) {
+        if (preg_match('#/v1/requests/[a-f0-9-]{36}/official-(?:document|html)/?$#i', $this->request_path())) {
             $documentLimit = (int) (getenv('API_OFFICIAL_DOCUMENT_MAX_BYTES') ?: 8388608);
             $limit = max($limit, min(16 * 1024 * 1024, $documentLimit));
         }

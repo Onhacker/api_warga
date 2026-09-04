@@ -383,31 +383,38 @@ class Sync_model extends CI_Model
         }
         $this->ensure_field('service_requests', 'document_sha256', "ALTER TABLE `service_requests` ADD `document_sha256` CHAR(64) NULL AFTER `document_path`");
         $this->ensure_field('service_requests', 'document_size', "ALTER TABLE `service_requests` ADD `document_size` BIGINT UNSIGNED NULL AFTER `document_sha256`");
+        $this->ensure_field('service_requests', 'document_format', "ALTER TABLE `service_requests` ADD `document_format` VARCHAR(10) NOT NULL DEFAULT 'pdf' AFTER `document_size`");
         $this->official_document_schema_ready = $this->db->field_exists('document_sha256', 'service_requests')
-            && $this->db->field_exists('document_size', 'service_requests');
+            && $this->db->field_exists('document_size', 'service_requests')
+            && $this->db->field_exists('document_format', 'service_requests');
         return $this->official_document_schema_ready;
     }
 
-    public function publish_official_document(array $installation, $requestId, $reference, $path, $sha256, $size, $actorName)
+    public function publish_official_document(array $installation, $requestId, $reference, $path, $sha256, $size, $actorName, $format = 'pdf')
     {
+        if (!in_array($format, array('pdf', 'html'), TRUE)) return array('success' => FALSE, 'message' => 'Format dokumen tidak valid.');
         if (!$this->ensure_official_document_schema()) {
             return array('success' => FALSE, 'message' => 'Struktur dokumen resmi belum siap.');
         }
         $request = $this->db
-            ->select('id, citizen_user_id, status, document_path, document_sha256')
+            ->select('id, citizen_user_id, status, local_reference, document_path, document_sha256, document_format')
             ->where(array('id' => (string) $requestId, 'village_id' => (string) $installation['village_id']))
             ->limit(1)
             ->get('service_requests')
             ->row_array();
         if (!$request) return array('success' => FALSE, 'message' => 'Permohonan tidak ditemukan pada desa ini.');
 
+        $upgrade = (string) $request['status'] === 'issued' && $format === 'html'
+            && (string) $request['document_format'] === 'pdf'
+            && !empty($request['document_sha256'])
+            && hash_equals((string) $request['local_reference'], trim((string) $reference));
         if ((string) $request['status'] === 'issued') {
-            if (!empty($request['document_sha256']) && hash_equals((string) $request['document_sha256'], (string) $sha256)) {
+            if ($request['document_format'] === $format && !empty($request['document_sha256']) && hash_equals((string) $request['document_sha256'], (string) $sha256)) {
                 return array('success' => TRUE, 'duplicate' => TRUE, 'message' => 'Dokumen resmi ini sudah diterbitkan.');
             }
-            return array('success' => FALSE, 'message' => 'Permohonan sudah memiliki dokumen resmi yang berbeda.');
+            if (!$upgrade) return array('success' => FALSE, 'message' => 'Permohonan sudah memiliki dokumen resmi yang berbeda.');
         }
-        if ((string) $request['status'] !== 'approved') {
+        if ((string) $request['status'] !== 'approved' && !$upgrade) {
             return array('success' => FALSE, 'message' => 'Dokumen hanya dapat diterbitkan setelah permohonan disetujui.');
         }
 
@@ -415,14 +422,17 @@ class Sync_model extends CI_Model
         if (!$this->db->trans_begin()) {
             return array('success' => FALSE, 'message' => 'Transaksi penerbitan belum dapat dimulai.');
         }
+        $this->db->where('document_format', $request['document_format']);
+        if ($upgrade) $this->db->where('document_sha256', $request['document_sha256']);
         $this->db
-            ->where(array('id' => (string) $requestId, 'village_id' => (string) $installation['village_id'], 'status' => 'approved'))
+            ->where(array('id' => (string) $requestId, 'village_id' => (string) $installation['village_id'], 'status' => $request['status']))
             ->update('service_requests', array(
                 'status' => 'issued',
                 'local_reference' => substr(trim((string) $reference), 0, 160),
                 'document_path' => (string) $path,
                 'document_sha256' => (string) $sha256,
                 'document_size' => (int) $size,
+                'document_format' => $format,
                 'local_sync_status' => 'synced',
                 'local_synced_at' => $now
             ));
@@ -431,15 +441,15 @@ class Sync_model extends CI_Model
             return array('success' => FALSE, 'message' => 'Status permohonan berubah karena diproses pengguna lain.');
         }
         $note = 'Dokumen resmi telah diterbitkan oleh ' . ($actorName !== '' ? $actorName : 'petugas desa') . '.';
-        $this->db->insert('request_status_history', array(
+        if (!$upgrade) $this->db->insert('request_status_history', array(
             'request_id' => (string) $requestId,
-            'from_status' => 'approved',
+            'from_status' => $request['status'],
             'to_status' => 'issued',
             'note' => $note,
             'actor_id' => NULL,
             'occurred_at' => $now
         ));
-        $this->db->insert('notifications', array(
+        if (!$upgrade) $this->db->insert('notifications', array(
             'id' => api_uuid(),
             'user_id' => (int) $request['citizen_user_id'],
             'request_id' => (string) $requestId,
@@ -450,8 +460,12 @@ class Sync_model extends CI_Model
             $this->db->trans_rollback();
             return array('success' => FALSE, 'message' => 'Penerbitan dokumen belum dapat disimpan.');
         }
-        $this->db->trans_commit();
-        return array('success' => TRUE, 'duplicate' => FALSE, 'message' => 'Dokumen resmi berhasil diterbitkan.');
+        if (!$this->db->trans_commit()) {
+            return array('success' => FALSE, 'message' => 'Transaksi penerbitan dokumen belum selesai.');
+        }
+        return array('success' => TRUE, 'duplicate' => FALSE,
+            'replaced_path' => $upgrade ? (string) $request['document_path'] : '',
+            'message' => $upgrade ? 'Tampilan surat berhasil diperbarui menjadi HTML.' : 'Dokumen resmi berhasil diterbitkan.');
     }
 
     private function apply_service_catalog(array $installation, array $payload)

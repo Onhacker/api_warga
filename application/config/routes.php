@@ -13,3 +13,4 @@ $route['v1/sync/ack'] = 'v1/sync/ack';
 $route['v1/residents/verify'] = 'v1/residents/verify';
 $route['v1/documents/(:any)'] = 'v1/documents/show/$1';
 $route['v1/requests/(:any)/official-document'] = 'v1/requests/official_document/$1';
+$route['v1/requests/(:any)/official-html'] = 'v1/requests/official_html/$1';
