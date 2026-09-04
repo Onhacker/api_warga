@@ -10,7 +10,8 @@ mysqli_report(MYSQLI_REPORT_OFF);
 function log_message($level, $message) {}
 function is_php($version) { return version_compare(PHP_VERSION, $version, '>='); }
 function show_error($message) { throw new RuntimeException(is_array($message) ? implode(' ', $message) : $message); }
-class CI_Model { public $db; }
+function &get_instance() { return $GLOBALS['test_ci']; }
+require BASEPATH . 'core/Model.php';
 class MY_Controller
 {
     public $rawBody = '';
@@ -99,8 +100,8 @@ try {
             'service_type_id' => 1, 'status' => $status, 'payload_json' => '{}'));
     }
     check($db->count_all('service_requests') === 4, 'fixtures stored in isolated database');
+    $GLOBALS['test_ci'] = (object) array('db' => $db);
     $model = new Sync_model();
-    $model->db = $db;
     mkdir($storage, 0700);
     putenv('PRIVATE_STORAGE_PATH=' . $storage);
     putenv('API_DEMO_MODE=0');

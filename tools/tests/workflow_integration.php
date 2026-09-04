@@ -17,7 +17,7 @@ function log_message($level, $message) {}
 function is_php($version) { return version_compare(PHP_VERSION, $version, '>='); }
 function show_error($message) { throw new RuntimeException(is_array($message) ? implode(' ', $message) : $message); }
 function &get_instance() { return $GLOBALS['test_ci']; }
-class CI_Model { public $db; public $load; public $Auth_model; }
+require BASEPATH . 'core/Model.php';
 require BASEPATH . 'database/DB.php';
 require APPPATH . 'helpers/api_helper.php';
 require APPPATH . 'models/Sync_model.php';
@@ -106,7 +106,7 @@ try {
     $db->insert('roles', array('id' => 1, 'name' => 'Warga', 'slug' => 'warga'));
     $db->insert('service_types', array('id' => 30, 'slug' => 'unused-legacy', 'name' => 'Legacy', 'short_name' => 'Legacy'));
     $sync = new Sync_model();
-    $sync->db = $db;
+    check($sync->ensure_resident_schema(), 'model detects database through CodeIgniter magic property');
     $schema = array('version' => 2, 'fields' => array(
         array('key' => 'usaha', 'label' => 'Nama Usaha', 'type' => 'text', 'required' => TRUE),
         array('key' => 'jenis', 'label' => 'Jenis', 'type' => 'select', 'required' => TRUE, 'options' => array(array('value' => 'kios', 'label' => 'Kios'))),
@@ -141,9 +141,7 @@ try {
     $db->insert('citizen_profiles', array('id' => api_uuid(), 'user_id' => 1, 'village_id' => $installation['village_id'], 'local_citizen_key' => $source, 'verification_status' => 'verified'));
     $citizen = array('id' => 1, 'village_id' => $installation['village_id'], 'name' => 'Test Citizen', 'phone' => '', 'local_citizen_key' => $source);
     $auth = new Auth_model();
-    $auth->db = $db;
     $requests = new Request_model();
-    $requests->db = $db;
     $requests->Auth_model = $auth;
     $requests->load = new class { public function model($name) {} };
     $accepts = new ReflectionMethod($requests, 'file_accepts_mime');

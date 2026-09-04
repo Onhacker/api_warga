@@ -208,7 +208,7 @@ class Sync_model extends CI_Model
 
     private function ensure_catalog_schema()
     {
-        if ($this->catalog_schema_ready || !isset($this->db)) {
+        if ($this->catalog_schema_ready) {
             return;
         }
         if ($this->db->table_exists('sync_messages')) {
@@ -275,7 +275,7 @@ class Sync_model extends CI_Model
      */
     public function ensure_resident_schema()
     {
-        if ($this->resident_schema_ready || !isset($this->db)) {
+        if ($this->resident_schema_ready) {
             return $this->resident_schema_ready;
         }
 
@@ -377,7 +377,7 @@ class Sync_model extends CI_Model
 
     public function ensure_official_document_schema()
     {
-        if ($this->official_document_schema_ready || !isset($this->db)
+        if ($this->official_document_schema_ready
             || !$this->db->table_exists('service_requests')) {
             return $this->official_document_schema_ready;
         }
