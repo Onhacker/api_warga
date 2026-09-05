@@ -185,6 +185,10 @@ try {
     $auth = new Auth_model();
     $requests = new Request_model();
     $requests->Auth_model = $auth;
+    $requests->Community_model = new class {
+        public function workflow($villageId) { return array('sekdes' => TRUE, 'kades' => TRUE); }
+        public function notify_staff() {}
+    };
     $requests->load = new class { public function model($name) {} };
     $accepts = new ReflectionMethod($requests, 'file_accepts_mime');
     $accepts->setAccessible(TRUE);
