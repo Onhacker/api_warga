@@ -28,7 +28,9 @@ deployment lengkap. Perintah ini tidak mengubah pengaturan situs di Hostinger.
 
 Jika semua baris pemeriksaan menunjukkan HTTP 200 dengan MIME sesuai, muat ulang
 PWA. Bila masih 403, periksa permission folder induk, aturan akses .htaccess,
-atau pembatasan hosting. Berikan output status pemeriksaan saja, bukan isi .env.
+atau pembatasan hosting. `application/x-javascript` adalah MIME JavaScript yang
+masih valid, jadi pemeriksa deployment menerimanya. Berikan output status
+pemeriksaan saja, bukan isi `.env`.
 
 Deployment berikutnya tetap memakai perintah biasa:
 

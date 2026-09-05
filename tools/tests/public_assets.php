@@ -11,9 +11,10 @@ function check($condition, $label) {
     echo 'PASS ' . $label . "\n";
     $count++;
 }
-function run_repair($path) {
+function run_repair($path, $url = '') {
     global $script;
     $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg('--root=' . $path);
+    if ($url !== '') $command .= ' ' . escapeshellarg('--url=' . $url);
     exec($command . ' 2>&1', $output, $code);
     return array('code'=>$code, 'output'=>implode("\n", $output));
 }
@@ -57,6 +58,9 @@ try {
     symlink($root, $testDir . '/linked-root');
     check(run_repair($testDir . '/linked-root')['code'] === 1, 'symlink root rejected');
     check(run_repair($testDir)['code'] === 1, 'unrelated root rejected');
+    if (getenv('SDW_TEST_PUBLIC_URL')) {
+        check(run_repair($root, getenv('SDW_TEST_PUBLIC_URL'))['code'] === 0, 'Hostinger JavaScript MIME is accepted');
+    }
     echo 'OK: ' . $count . " public asset permission checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, $e->getMessage() . "\n");

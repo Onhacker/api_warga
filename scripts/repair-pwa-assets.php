@@ -18,10 +18,10 @@ try {
     $required = array(
         'assets/css/warga.min.css' => array('text/css'),
         'assets/css/community.min.css' => array('text/css'),
-        'assets/js/warga.min.js' => array('application/javascript', 'text/javascript'),
-        'assets/js/community.min.js' => array('application/javascript', 'text/javascript'),
+        'assets/js/warga.min.js' => array('application/javascript', 'text/javascript', 'application/x-javascript'),
+        'assets/js/community.min.js' => array('application/javascript', 'text/javascript', 'application/x-javascript'),
         'assets/pwa/icon-192.png' => array('image/png'),
-        'service-worker.js' => array('application/javascript', 'text/javascript'),
+        'service-worker.js' => array('application/javascript', 'text/javascript', 'application/x-javascript'),
         'manifest.webmanifest' => array('application/manifest+json', 'application/json'),
         'offline.html' => array('text/html')
     );
