@@ -359,6 +359,7 @@ CREATE TABLE IF NOT EXISTS warga_push_deliveries (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE IF NOT EXISTS warga_staff_sources (
   village_id CHAR(36) NOT NULL, local_id CHAR(36) NOT NULL, user_id BIGINT UNSIGNED NOT NULL, source_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  credential_fingerprint CHAR(64) NULL,
   PRIMARY KEY (village_id,local_id), UNIQUE KEY uniq_staff_source_user (user_id),
   CONSTRAINT fk_staff_source_village FOREIGN KEY (village_id) REFERENCES village_tenants(id),
   CONSTRAINT fk_staff_source_user FOREIGN KEY (user_id) REFERENCES users(id)

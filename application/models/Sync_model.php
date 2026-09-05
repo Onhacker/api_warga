@@ -143,6 +143,11 @@ class Sync_model extends CI_Model
             // are being validated. Keep the sync history privacy-minimized.
             $storedPayload = ($aggregateType === 'resident_directory' && $operation === 'snapshot')
                 ? $this->redact_resident_payload($payload) : $payload;
+            if ($aggregateType === 'staff_accounts') {
+                $storedPayload = array('source_revision' => $payload['source_revision'] ?? '',
+                    'snapshot_hash' => $payload['snapshot_hash'] ?? '',
+                    'staff_count' => isset($payload['staff']) && is_array($payload['staff']) ? count($payload['staff']) : 0);
+            }
             $inserted = $this->db->insert('sync_messages', array(
                 'id' => $messageId,
                 'village_id' => $installation['village_id'],
@@ -211,7 +216,28 @@ class Sync_model extends CI_Model
     private function apply_staff_accounts_snapshot(array $installation, array $payload)
     {
         $villageId=(string)$installation['village_id'];
-        $staff=isset($payload['staff']) && is_array($payload['staff']) ? $payload['staff'] : array();
+        if (!$this->db->table_exists('warga_village_config_versions')
+            || !$this->db->field_exists('credential_fingerprint', 'warga_staff_sources')) {
+            return array('success'=>false,'message'=>'Jalankan migrasi database 013 dan 014 pada server.');
+        }
+        if (!isset($payload['staff'], $payload['verification'], $payload['contact'])
+            || !is_array($payload['staff']) || !is_array($payload['verification']) || !is_array($payload['contact'])
+            || !preg_match('/^[1-9][0-9]{0,17}$/D', (string) ($payload['source_revision'] ?? ''))) {
+            return array('success'=>false,'message'=>'Snapshot akun atau nomor revisi tidak lengkap.');
+        }
+        foreach (array('sekdes', 'kades') as $stage) {
+            if (!array_key_exists($stage, $payload['verification']) || !is_bool($payload['verification'][$stage])) {
+                return array('success'=>false,'message'=>'Pengaturan verifikasi harus berupa Ya/Tidak.');
+            }
+        }
+        // The owning tenant row serializes snapshots, including the first one.
+        $tenant=$this->db->query('SELECT settings_json FROM village_tenants WHERE id=? FOR UPDATE', array($villageId))->row_array();
+        $version=$this->db->where('village_id',$villageId)->get('warga_village_config_versions')->row_array();
+        $revision=(int)$payload['source_revision'];
+        if ($version && $revision <= (int)$version['source_revision']) {
+            return array('success'=>true,'message'=>'Revisi akun lama diabaikan; pengaturan terbaru tetap dipakai.');
+        }
+        $staff=$payload['staff'];
         if (count($staff)>20) return array('success'=>false,'message'=>'Jumlah akun petugas melebihi batas.');
         $roles=$this->db->where_in('slug',array('sekdes','kepala-desa'))->get('roles')->result_array();
         $roleIds=array();
@@ -222,24 +248,32 @@ class Sync_model extends CI_Model
             $id=(string)$row['id']; $role=str_replace('_','-',strtolower(trim((string)($row['role']??''))));
             $name=trim((string)($row['name']??'')); $email=strtolower(trim((string)($row['email']??'')));
             $hash=(string)($row['password_hash']??'');
-            if(!isset($roleIds[$role]) || $name==='' || strlen($name)>160 || !filter_var($email,FILTER_VALIDATE_EMAIL)
+            if(in_array($id,$kept,true) || !isset($roleIds[$role]) || $name==='' || mb_strlen($name)>160
+                || strlen($email)>180 || !filter_var($email,FILTER_VALIDATE_EMAIL)
                 || !preg_match('/^\$2y\$[0-9]{2}\$[A-Za-z0-9\.\/]{53}$/D',$hash)) return array('success'=>false,'message'=>'Data akun petugas tidak valid.');
             $existing=$this->db->where(array('village_id'=>$villageId,'local_id'=>$id))->get('warga_staff_sources')->row_array();
+            $this->db->group_start()->where('email',$email)->or_where('username',$email)->group_end();
+            if ($existing) $this->db->where('id !=',(int)$existing['user_id']);
+            if ($this->db->count_all_results('users')) return array('success'=>false,'message'=>'Email petugas sudah digunakan akun lain.');
+            $fingerprint=hash('sha256',$hash);
             $values=array('role_id'=>$roleIds[$role],'village_id'=>$villageId,'name'=>$name,'email'=>$email,
                 'password_hash'=>$hash,'is_active'=>!empty($row['is_active'])?1:0,'updated_at'=>date('Y-m-d H:i:s'));
             if($existing) {
+                // Do not undo a password changed in PWA when only contact or
+                // workflow settings were edited locally.
+                if (empty($existing['credential_fingerprint']) || hash_equals($existing['credential_fingerprint'],$fingerprint)) {
+                    unset($values['password_hash']);
+                }
                 $this->db->where('id',(int)$existing['user_id'])->update('users',$values); $userId=(int)$existing['user_id'];
             } else {
                 // The email remains the staff login. Local IDs are the stable
                 // source key, while the generated username stays invisible.
                 $username='warga-'.$villageId.'-'.substr(hash('sha256',$email),0,24);
-                $duplicate=$this->db->where('email',$email)->where('village_id !=',$villageId)->count_all_results('users');
-                if($duplicate) return array('success'=>false,'message'=>'Email petugas sudah dipakai pada desa lain.');
                 $values['username']=$username; $this->db->insert('users',$values); $userId=(int)$this->db->insert_id();
                 if($userId<1) return array('success'=>false,'message'=>'Akun petugas belum dapat dibuat.');
             }
             $this->db->replace('warga_staff_sources',array('village_id'=>$villageId,'local_id'=>$id,'user_id'=>$userId,
-                'source_revision'=>(int)($payload['source_revision']??0)));
+                'source_revision'=>$revision,'credential_fingerprint'=>$fingerprint));
             $kept[]=$id;
         }
         // Accounts removed/disabled in Administrator > Akun are disabled
@@ -248,12 +282,16 @@ class Sync_model extends CI_Model
         if($kept) $this->db->where_not_in('local_id',$kept);
         $removed=$this->db->get('warga_staff_sources')->result_array();
         foreach($removed as $row) $this->db->where('id',(int)$row['user_id'])->update('users',array('is_active'=>0));
-        if($removed) { $this->db->where('village_id',$villageId); if($kept)$this->db->where_not_in('local_id',$kept); $this->db->delete('warga_staff_sources'); }
-        $tenant=$this->db->where('id',$villageId)->get('village_tenants')->row_array();
         $settings=json_decode((string)($tenant['settings_json']??''),true); if(!is_array($settings))$settings=array();
         $settings['verification']=array('sekdes'=>!empty($payload['verification']['sekdes']),'kades'=>!empty($payload['verification']['kades']));
-        if(isset($payload['contact']) && is_array($payload['contact']))$settings['contact']=$payload['contact'];
+        $settings['contact']=array();
+        foreach (array('institution'=>80,'address'=>1000,'phone'=>80,'email'=>180,'website'=>255,'office_hours'=>255) as $key=>$limit) {
+            if (isset($payload['contact'][$key]) && !is_string($payload['contact'][$key])) return array('success'=>false,'message'=>'Format kontak desa tidak valid.');
+            $settings['contact'][$key]=mb_substr(trim($payload['contact'][$key] ?? ''),0,$limit);
+        }
+        if ($settings['contact']['institution']==='') $settings['contact']['institution']='Desa';
         $this->db->where('id',$villageId)->update('village_tenants',array('settings_json'=>json_encode($settings,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)));
+        $this->db->replace('warga_village_config_versions',array('village_id'=>$villageId,'source_revision'=>$revision));
         return array('success'=>true,'message'=>'Akun petugas dan alur verifikasi diterapkan.');
     }
 
@@ -852,13 +890,15 @@ class Sync_model extends CI_Model
         $actorName = substr(trim((string) (isset($payload['actor_name']) ? $payload['actor_name'] : 'Petugas Desa')), 0, 160);
         $requestPayload=json_decode((string)($request['payload_json']??''),true);
         $verification=isset($requestPayload['verification'])&&is_array($requestPayload['verification'])?$requestPayload['verification']:array('sekdes'=>true,'kades'=>true);
+        $verification=array_merge(array('sekdes'=>true,'kades'=>true),$verification);
 
         $allowed = FALSE;
         if ($actorRole === 'sekdes') {
-            $allowed = $fromStatus === 'submitted' && ($toStatus === 'verified' || (!$verification['kades'] && $toStatus === 'approved') || in_array($toStatus, array('revision','rejected'), TRUE));
+            $allowed = $verification['sekdes'] && $fromStatus === 'submitted'
+                && ($toStatus === ($verification['kades'] ? 'verified' : 'approved') || in_array($toStatus, array('revision','rejected'), TRUE));
         } elseif (in_array($actorRole, array('kepala-desa', 'kades'), TRUE)) {
-            $allowed = ($fromStatus === 'verified' && in_array($toStatus, array('approved', 'revision', 'rejected'), TRUE))
-                || (!$verification['sekdes'] && $fromStatus === 'submitted' && in_array($toStatus,array('approved','revision','rejected'),TRUE));
+            $allowed = $verification['kades'] && ($fromStatus === 'verified' || (!$verification['sekdes'] && $fromStatus === 'submitted'))
+                && in_array($toStatus,array('approved','revision','rejected'),TRUE);
         } elseif (in_array($actorRole, array('admin-desa', 'administrator', 'admin-pusat', 'pelayanan-surat'), TRUE)) {
             $allowed = ($fromStatus === 'submitted' && in_array($toStatus, array('verified', 'revision', 'rejected'), TRUE))
                 || ($fromStatus === 'verified' && in_array($toStatus, array('approved', 'revision', 'rejected'), TRUE))
@@ -907,6 +947,16 @@ class Sync_model extends CI_Model
             'notification_id' => $notificationId,
             'target_path' => 'permohonan/' . (string) $aggregateId
         ));
+        if ($toStatus === 'verified' && $verification['kades']) {
+            $staff=$this->db->select('u.id')->from('users u')->join('roles r','r.id=u.role_id')
+                ->where(array('u.village_id'=>$installation['village_id'],'u.is_active'=>1,'r.slug'=>'kepala-desa'))->get()->result_array();
+            foreach ($staff as $user) {
+                $staffNotification=api_uuid();
+                $this->db->insert('notifications',array('id'=>$staffNotification,'user_id'=>$user['id'],'request_id'=>(string)$aggregateId,
+                    'title'=>'Permohonan menunggu persetujuan','message'=>'Permohonan surat telah diverifikasi oleh petugas desa.'));
+                $this->db->insert('warga_notification_targets',array('notification_id'=>$staffNotification,'target_path'=>'petugas/permohonan/'.$aggregateId));
+            }
+        }
 
         return array('success' => TRUE, 'message' => 'Status permohonan diperbarui menjadi ' . $toStatus . '.');
     }

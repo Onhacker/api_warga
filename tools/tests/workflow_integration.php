@@ -37,6 +37,8 @@ require APPPATH . 'controllers/v1/Residents.php';
 require $pwa . '/application/helpers/warga_helper.php';
 require $pwa . '/application/models/Auth_model.php';
 require $pwa . '/application/models/Request_model.php';
+require $pwa . '/application/models/Community_model.php';
+require $pwa . '/application/models/Notification_model.php';
 set_error_handler(function ($severity, $message, $file, $line) {
     if (error_reporting() & $severity) throw new ErrorException($message, 0, $severity, $file, $line);
     return FALSE;
@@ -100,7 +102,7 @@ try {
         ALTER TABLE citizen_profiles DROP INDEX uniq_citizen_source, DROP COLUMN local_citizen_key, DROP COLUMN name_hash;
         ALTER TABLE sync_messages MODIFY aggregate_id CHAR(36) NOT NULL;');
     for ($pass = 0; $pass < 2; $pass++) {
-        foreach (array('006_service_catalog', '007_resident_directory', '008_unique_citizen_source', '009_official_documents', '010_sync_aggregate_keys', '011_official_html') as $migration) {
+        foreach (array('006_service_catalog', '007_resident_directory', '008_unique_citizen_source', '009_official_documents', '010_sync_aggregate_keys', '011_official_html', '012_citizen_identity_details', '013_community_services', '014_staff_credentials') as $migration) {
             $apiSql = file_get_contents($root . '/database/migrations/' . $migration . '.sql');
             check($apiSql === file_get_contents($pwa . '/database/migrations/' . $migration . '.sql'), "API/PWA migration $migration matches (pass $pass)");
             sql_batch($admin, $apiSql);
@@ -183,13 +185,15 @@ try {
     $db->insert('citizen_profiles', array('id' => api_uuid(), 'user_id' => 1, 'village_id' => $installation['village_id'], 'local_citizen_key' => $source, 'verification_status' => 'verified'));
     $citizen = array('id' => 1, 'village_id' => $installation['village_id'], 'name' => 'Test Citizen', 'phone' => '', 'local_citizen_key' => $source);
     $auth = new Auth_model();
+    $community = new Community_model();
+    $community->Auth_model = $auth;
+    $community->load = new class { public function model($name) {} };
+    $notifications = new Notification_model();
     $requests = new Request_model();
     $requests->Auth_model = $auth;
-    $requests->Community_model = new class {
-        public function workflow($villageId) { return array('sekdes' => TRUE, 'kades' => TRUE); }
-        public function notify_staff() {}
-    };
+    $requests->Community_model = $community;
     $requests->load = new class { public function model($name) {} };
+    require __DIR__ . '/community_checks.php';
     $accepts = new ReflectionMethod($requests, 'file_accepts_mime');
     $accepts->setAccessible(TRUE);
     check($accepts->invoke($requests, 'application/pdf', '.pdf')
@@ -232,6 +236,31 @@ try {
     }
     check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => 'issued', 'actor_role' => 'administrator'), $requestId)['rejected'] === 1, 'issued status requires an official document endpoint');
     check(push_message($sync, $other, 'service_request', 'status_update', array('status' => 'rejected', 'actor_role' => 'administrator', 'note' => 'Test'), $requestId)['rejected'] === 1, 'another village cannot change request status');
+    $originalRequest=$db->where('id',$requestId)->get('service_requests')->row_array();
+    foreach (array(array(true,true),array(true,false),array(false,true),array(false,false)) as $stages) {
+        $flow=array('sekdes'=>$stages[0],'kades'=>$stages[1]);
+        $flowPayload=json_decode($originalRequest['payload_json'],true);
+        $flowPayload['verification']=$flow;
+        foreach (array('sekdes','kepala-desa') as $role) {
+            foreach (array('submitted','verified') as $from) {
+                $actions=Verification_workflow::actions($role,$from,$flow);
+                foreach (array('verify'=>'verified','approve'=>'approved') as $action=>$to) {
+                    $db->where('id',$requestId)->update('service_requests',array('status'=>$from,'payload_json'=>json_encode($flowPayload)));
+                    $expected=in_array($action,$actions,true);
+                    $result=push_message($sync,$installation,'service_request','status_update',array('actor_role'=>$role,'status'=>$to),$requestId);
+                    check(($result['accepted']===1)===$expected,'API matches workflow '.json_encode($flow).' '.$role.' '.$from.' -> '.$to);
+                }
+            }
+        }
+        $db->where('id',$requestId)->update('service_requests',array('status'=>'submitted','payload_json'=>json_encode($flowPayload)));
+        if ($flow['sekdes']) {
+            $action=$flow['kades'] ? 'verify' : 'approve';
+            check(!empty($requests->apply_action($requestId,$sekdes,$action)['success']),'real PWA Sekdes action follows configured workflow');
+        }
+        if ($flow['kades']) check(!empty($requests->apply_action($requestId,$kades,'approve')['success']),'real PWA Kades action follows configured workflow');
+        if (!$flow['sekdes'] && !$flow['kades']) check(empty($requests->apply_action($requestId,$kades,'approve')['success']),'PWA disabled verifier cannot approve');
+    }
+    $db->where('id',$requestId)->update('service_requests',array('status'=>$originalRequest['status'],'payload_json'=>$originalRequest['payload_json']));
     $empty = $snapshot;
     $empty['snapshot_id'] = hash('sha256', 'snapshot-empty');
     $empty['snapshot_created_at'] = date('c');

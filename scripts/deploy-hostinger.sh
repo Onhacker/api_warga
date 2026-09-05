@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 API_REPO="${API_REPO:-$HOME/repositories/api_warga}"
 PWA_REPO="${PWA_REPO:-$HOME/repositories/smardesa_warga}"
@@ -96,14 +97,17 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
     --single-transaction --skip-lock-tables "$database_name" >"$backup_file"
 chmod 600 "$backup_file"
 
-printf 'Menjalankan migrasi database 006 sampai 011...\n'
+printf 'Menjalankan migrasi database 006 sampai 014...\n'
 for migration in \
     006_service_catalog \
     007_resident_directory \
     008_unique_citizen_source \
     009_official_documents \
     010_sync_aggregate_keys \
-    011_official_html
+    011_official_html \
+    012_citizen_identity_details \
+    013_community_services \
+    014_staff_credentials
 do
     migration_file="$API_REPO/database/migrations/$migration.sql"
     if [[ ! -f "$migration_file" ]]; then
