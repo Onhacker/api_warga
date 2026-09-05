@@ -65,11 +65,70 @@ function sql_batch($db, $sql)
 }
 function push_message($model, $installation, $type, $operation, $payload, $aggregate = NULL, $key = NULL)
 {
-    return $model->enqueue($installation, array(array(
+    static $catalogVersions = array();
+    static $directoryVersions = array();
+    static $statusVersion = 1000;
+    $payload = is_array($payload) ? $payload : array();
+    $message = array(
         'idempotency_key' => $key ?: 'test-message:' . api_uuid(),
         'aggregate_type' => $type, 'aggregate_id' => $aggregate ?: 'catalog-' . str_repeat('a', 48),
         'operation' => $operation, 'payload' => $payload
-    )));
+    );
+
+    if ($type === 'service_catalog' && $operation === 'upsert') {
+        $services = isset($payload['services']) && is_array($payload['services']) ? $payload['services'] : array();
+        $catalogJson = json_encode($services, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $catalogHash = hash('sha256', is_string($catalogJson) ? $catalogJson : '');
+        if (!isset($catalogVersions[$catalogHash])) {
+            $catalogVersions[$catalogHash] = count($catalogVersions) + 1;
+        }
+        $payload['catalog_version'] = $catalogVersions[$catalogHash];
+        $payload['catalog_hash'] = $catalogHash;
+        $payload['catalog_empty'] = empty($services);
+        $message['payload'] = $payload;
+        $message['event_version'] = $payload['catalog_version'];
+    } elseif ($type === 'resident_directory' && $operation === 'snapshot') {
+        $snapshotId = strtolower(trim((string) ($payload['snapshot_id'] ?? '')));
+        if ($snapshotId === '') $snapshotId = hash('sha256', api_uuid());
+        $payload['snapshot_id'] = $snapshotId;
+        if (!isset($directoryVersions[$snapshotId])) {
+            $directoryVersions[$snapshotId] = count($directoryVersions) + 1;
+        }
+        $payload['directory_version'] = $directoryVersions[$snapshotId];
+        $residents = isset($payload['residents']) && is_array($payload['residents']) ? $payload['residents'] : array();
+        $canonical = array();
+        foreach ($residents as $resident) {
+            $canonical[] = array(
+                'source_key' => trim((string) ($resident['source_key'] ?? '')),
+                'nik' => preg_replace('/[^0-9]/', '', (string) ($resident['nik'] ?? '')),
+                'kk' => preg_replace('/[^0-9]/', '', (string) ($resident['kk'] ?? '')),
+                'name' => trim((string) ($resident['name'] ?? '')),
+                'birth_date' => !empty($resident['birth_date']) ? (string) $resident['birth_date'] : NULL
+            );
+        }
+        $canonicalJson = json_encode($canonical, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $batchHash = hash('sha256', is_string($canonicalJson) ? $canonicalJson : '');
+        $payload['batch_hash'] = $batchHash;
+        if (empty($payload['directory_hash'])) {
+            $payload['directory_hash'] = hash('sha256', 'v1|' . $batchHash);
+        }
+        $message['payload'] = $payload;
+        $message['event_version'] = $payload['directory_version'];
+    } elseif ($type === 'staff_accounts' && $operation === 'snapshot') {
+        $message['event_version'] = (int) ($payload['source_revision'] ?? 1);
+    } elseif ($type === 'service_request' && $operation === 'status_update') {
+        $currentVersion = 0;
+        if ($aggregate !== NULL && isset($GLOBALS['test_ci']->db)) {
+            $currentRow = $GLOBALS['test_ci']->db->select('event_version')->where('id', (string) $aggregate)->get('service_requests')->row_array();
+            $currentVersion = (int) ($currentRow['event_version'] ?? 0);
+        }
+        $statusVersion = max($statusVersion + 1, $currentVersion + 1);
+        $payload['event_version'] = $statusVersion;
+        $message['payload'] = $payload;
+        $message['event_version'] = $payload['event_version'];
+    }
+
+    return $model->enqueue($installation, array($message));
 }
 function verify_resident($db, $sync, array $identity)
 {
@@ -237,22 +296,28 @@ try {
     check(push_message($sync, $installation, 'service_request', 'status_update', array('status' => 'issued', 'actor_role' => 'administrator'), $requestId)['rejected'] === 1, 'issued status requires an official document endpoint');
     check(push_message($sync, $other, 'service_request', 'status_update', array('status' => 'rejected', 'actor_role' => 'administrator', 'note' => 'Test'), $requestId)['rejected'] === 1, 'another village cannot change request status');
     $originalRequest=$db->where('id',$requestId)->get('service_requests')->row_array();
+    $originalTenant=$db->where('id',$installation['village_id'])->get('village_tenants')->row_array();
+    $originalTenantSettings=$originalTenant ? $originalTenant['settings_json'] : NULL;
     foreach (array(array(true,true),array(true,false),array(false,true),array(false,false)) as $stages) {
         $flow=array('sekdes'=>$stages[0],'kades'=>$stages[1]);
-        $flowPayload=json_decode($originalRequest['payload_json'],true);
-        $flowPayload['verification']=$flow;
+        check($db->where('id',$installation['village_id'])->update('village_tenants',array(
+            'settings_json'=>json_encode(array('verification'=>$flow),JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)
+        )), 'tenant workflow settings updated for '.json_encode($flow));
+        $storedFlowRow=$db->select('settings_json')->where('id',$installation['village_id'])->get('village_tenants')->row_array();
+        $storedFlow=json_decode((string)$storedFlowRow['settings_json'],true);
+        check(isset($storedFlow['verification']) && (bool)$storedFlow['verification']['sekdes']===$flow['sekdes'] && (bool)$storedFlow['verification']['kades']===$flow['kades'], 'tenant workflow settings read back for '.json_encode($flow));
         foreach (array('sekdes','kepala-desa') as $role) {
             foreach (array('submitted','verified') as $from) {
                 $actions=Verification_workflow::actions($role,$from,$flow);
                 foreach (array('verify'=>'verified','approve'=>'approved') as $action=>$to) {
-                    $db->where('id',$requestId)->update('service_requests',array('status'=>$from,'payload_json'=>json_encode($flowPayload)));
+                    $db->where('id',$requestId)->update('service_requests',array('status'=>$from));
                     $expected=in_array($action,$actions,true);
                     $result=push_message($sync,$installation,'service_request','status_update',array('actor_role'=>$role,'status'=>$to),$requestId);
                     check(($result['accepted']===1)===$expected,'API matches workflow '.json_encode($flow).' '.$role.' '.$from.' -> '.$to);
                 }
             }
         }
-        $db->where('id',$requestId)->update('service_requests',array('status'=>'submitted','payload_json'=>json_encode($flowPayload)));
+        $db->where('id',$requestId)->update('service_requests',array('status'=>'submitted'));
         if ($flow['sekdes']) {
             $action=$flow['kades'] ? 'verify' : 'approve';
             check(!empty($requests->apply_action($requestId,$sekdes,$action)['success']),'real PWA Sekdes action follows configured workflow');
@@ -260,7 +325,8 @@ try {
         if ($flow['kades']) check(!empty($requests->apply_action($requestId,$kades,'approve')['success']),'real PWA Kades action follows configured workflow');
         if (!$flow['sekdes'] && !$flow['kades']) check(empty($requests->apply_action($requestId,$kades,'approve')['success']),'PWA disabled verifier cannot approve');
     }
-    $db->where('id',$requestId)->update('service_requests',array('status'=>$originalRequest['status'],'payload_json'=>$originalRequest['payload_json']));
+    check($db->where('id',$installation['village_id'])->update('village_tenants',array('settings_json'=>$originalTenantSettings)), 'tenant workflow settings restored');
+    $db->where('id',$requestId)->update('service_requests',array('status'=>$originalRequest['status'],'event_version'=>$originalRequest['event_version'],'payload_json'=>$originalRequest['payload_json']));
     $empty = $snapshot;
     $empty['snapshot_id'] = hash('sha256', 'snapshot-empty');
     $empty['snapshot_created_at'] = date('c');
@@ -271,7 +337,7 @@ try {
     check(!$auth->citizen_is_verified(1) && empty($requests->create($citizen, $data)['success']), 'removed resident cannot make new requests');
     push_message($sync, $installation, 'resident_directory', 'snapshot', $snapshot);
     check(!$auth->citizen_is_verified(1), 'late older snapshot cannot reactivate removed resident');
-    push_message($sync, $installation, 'service_catalog', 'upsert', array('services' => array()));
+    check(push_message($sync, $installation, 'service_catalog', 'upsert', array('services' => array(), 'catalog_empty' => true))['accepted'] === 1, 'empty catalog is explicitly unpublished');
     check($requests->service_types($installation['village_id']) === array()
         && count($requests->service_types($other['village_id'])) === 1, 'unpublishing catalog affects only owning village');
     echo "OK: $checks API/PWA workflow checks passed. HTTP upload/authentication are outside this test.\n";

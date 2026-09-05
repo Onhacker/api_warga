@@ -120,6 +120,7 @@ class Requests extends MY_Controller
             'success' => TRUE,
             'service_request_id' => $requestId,
             'status' => 'issued',
+            'event_version' => max(1, (int) (isset($result['event_version']) ? $result['event_version'] : 0)),
             'reference' => $reference,
             'filename' => $filename,
             'sha256' => $sha256,

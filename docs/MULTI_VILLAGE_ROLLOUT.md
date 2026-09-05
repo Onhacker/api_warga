@@ -46,8 +46,8 @@ sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
      --output=/home/USER/smartdesa-private/installation-credentials.json
    ```
 
-3. Jalankan migrasi `005_auto_enrollment.sql`, lalu buat pasangan bootstrap yang
-   sama untuk API pusat dan workstation builder:
+3. Jalankan migrasi `005_auto_enrollment.sql`, lalu siapkan mode
+   `activation_grant` pada API pusat dan workstation builder:
 
    ```bash
    php tools/configure_auto_enrollment.php \
@@ -56,12 +56,13 @@ sebaiknya baru diaktifkan setelah aturan konflik dan pembagian antrean diuji.
      --write
    ```
 
-   File builder bersifat rahasia, permission `0600`, dan tidak boleh berada di
-   `public_html` atau repository. Salin secara aman ke workstation builder dan
-   masukkan nilainya ke `.env.build` satu kali.
-4. Buat satu installer SmartDesa universal untuk semua desa. Installer membawa
-   bootstrap yang sama; identitas desa tetap berasal dari database lokal setelah
-   registrasi SmartDesa selesai.
+   File builder hanya memuat URL API dan mode enrollment, permission `0600`, dan
+   tidak boleh berada di `public_html` atau repository. Secret grant tidak pernah
+   masuk file ini, installer, atau dibagikan kepada desa. Salin secara aman ke
+   workstation builder dan masukkan nilainya ke `.env.build` satu kali.
+4. Buat satu installer SmartDesa universal untuk semua desa. Installer tidak
+   membawa bootstrap bersama; identitas desa tetap berasal dari database lokal
+   setelah registrasi SmartDesa selesai.
 5. Saat Administrator membuka Permohonan Warga, aplikasi membaca `kode_desa`,
    terhubung otomatis, menyimpan `installation_code` dan secret khusus desa,
    kemudian mengosongkan bootstrap dari `.env` lokal. Operator tidak memilih

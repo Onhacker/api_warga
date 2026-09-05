@@ -152,10 +152,10 @@ class Installations extends MY_Controller
     /**
      * Hubungkan installer universal tanpa meminta operator mengetik kode.
      *
-     * Endpoint ini tetap membutuhkan bootstrap HMAC yang hanya ditanam oleh
-     * builder resmi dan dikonfigurasi sekali pada API pusat. Kode wilayah
-     * diambil dari identitas lokal yang sedang login, bukan dari input bebas
-     * pada browser desa.
+     * Instalasi baru wajib membawa grant singkat dari server aktivasi. Grant
+     * terikat ke satu kampung dan satu device_id, lalu hanya dapat dipakai
+     * sekali. Bootstrap HMAC lama hanya tersedia bila mode legacy sengaja
+     * diaktifkan untuk masa transisi.
      */
     public function auto_enroll()
     {
@@ -169,7 +169,6 @@ class Installations extends MY_Controller
         if (!$this->auto_enrollment_schema_ready()) {
             return $this->fail('Skema koneksi otomatis belum dipasang.', 503, 'migration_required');
         }
-        if (!$this->authenticate_auto_enrollment()) return;
 
         $payload = $this->read_json();
         if ($payload === FALSE) return;
@@ -177,6 +176,7 @@ class Installations extends MY_Controller
         $villageCode = strtoupper(trim((string) (isset($payload['village_code']) ? $payload['village_code'] : '')));
         $deviceId = trim((string) (isset($payload['device_id']) ? $payload['device_id'] : ''));
         $appVersion = trim((string) (isset($payload['app_version']) ? $payload['app_version'] : ''));
+        $grant = trim((string) (isset($payload['enrollment_grant']) ? $payload['enrollment_grant'] : ''));
         $rateScope = preg_match('/^[0-9]{2}(?:\.[0-9]{2}){2}\.[0-9]{4}$/', $villageCode)
             ? 'auto:' . $villageCode : 'auto:invalid';
 
@@ -189,6 +189,15 @@ class Installations extends MY_Controller
             || strlen($appVersion) > 50) {
             $this->record_failed_enrollment($rateScope);
             return $this->fail('Identitas kampung atau perangkat lokal tidak valid.', 422, 'invalid_auto_enrollment');
+        }
+
+        if ($grant !== '') {
+            if (!$this->authenticate_enrollment_grant($grant, $villageCode, $deviceId)) return;
+        } elseif (!$this->legacy_auto_enrollment_enabled()) {
+            $this->record_failed_enrollment($rateScope);
+            return $this->fail('Grant koneksi otomatis belum tersedia atau sudah kedaluwarsa.', 401, 'enrollment_grant_required');
+        } elseif (!$this->authenticate_auto_enrollment()) {
+            return;
         }
 
         $deviceHash = hash('sha256', $deviceId);
@@ -278,7 +287,7 @@ class Installations extends MY_Controller
                 ),
                 'enrolled_at' => $alreadyUsed ? (string) $row['enrollment_used_at'] : $now
             ),
-            'mode' => 'automatic',
+            'mode' => $grant !== '' ? 'activation_grant' : 'legacy_bootstrap',
             'server_time' => date('c')
         ));
     }
@@ -286,14 +295,107 @@ class Installations extends MY_Controller
     private function auto_enrollment_enabled()
     {
         $enabled = strtolower(trim((string) getenv('WARGA_AUTO_ENROLL_ENABLED')));
+        return in_array($enabled, array('1', 'true', 'yes', 'on'), TRUE)
+            && ($this->grant_enrollment_enabled() || $this->legacy_auto_enrollment_enabled());
+    }
+
+    private function grant_enrollment_enabled()
+    {
+        $secret = trim((string) getenv('WARGA_ENROLL_GRANT_SECRET'));
+        return strlen($secret) >= 32
+            && !preg_match('/replace-with|ganti-dengan|change-before|example/i', $secret)
+            && !preg_match('/[\r\n]/', $secret);
+    }
+
+    private function legacy_auto_enrollment_enabled()
+    {
+        $legacy = strtolower(trim((string) getenv('WARGA_AUTO_ENROLL_LEGACY_ENABLED')));
         $key = trim((string) getenv('WARGA_AUTO_ENROLL_KEY'));
         $secret = trim((string) getenv('WARGA_AUTO_ENROLL_SECRET'));
-        return in_array($enabled, array('1', 'true', 'yes', 'on'), TRUE)
+        return in_array($legacy, array('1', 'true', 'yes', 'on'), TRUE)
             && preg_match('/^[A-Za-z0-9._-]{16,128}$/', $key)
             && strlen($secret) >= 32
             && !hash_equals($key, $secret)
             && !preg_match('/replace-with|ganti-dengan|change-before|example/i', $key . $secret)
             && !preg_match('/[\r\n]/', $key . $secret);
+    }
+
+    private function authenticate_enrollment_grant($token, $villageCode, $deviceId)
+    {
+        if (!$this->grant_enrollment_enabled()
+            || strlen((string) $token) > 4096
+            || substr_count((string) $token, '.') !== 1) {
+            $this->fail('Grant koneksi otomatis tidak valid.', 401, 'invalid_enrollment_grant');
+            return FALSE;
+        }
+
+        list($encoded, $signature) = explode('.', (string) $token, 2);
+        $payloadJson = $this->base64url_decode($encoded);
+        $sentSignature = $this->base64url_decode($signature);
+        $secret = (string) getenv('WARGA_ENROLL_GRANT_SECRET');
+        $expectedSignature = hash_hmac('sha256', $encoded, $secret, TRUE);
+        if ($payloadJson === FALSE || $sentSignature === FALSE
+            || strlen($sentSignature) !== 32
+            || !hash_equals($expectedSignature, $sentSignature)) {
+            $this->fail('Tanda tangan grant koneksi otomatis tidak sesuai.', 401, 'invalid_enrollment_grant');
+            return FALSE;
+        }
+
+        $claim = json_decode($payloadJson, TRUE);
+        if (!is_array($claim)) {
+            $this->fail('Isi grant koneksi otomatis tidak valid.', 401, 'invalid_enrollment_grant');
+            return FALSE;
+        }
+        $version = isset($claim['ver']) ? (int) $claim['ver'] : 0;
+        $issuer = isset($claim['iss']) ? (string) $claim['iss'] : '';
+        $audience = isset($claim['aud']) ? (string) $claim['aud'] : '';
+        $jti = strtolower(trim((string) (isset($claim['jti']) ? $claim['jti'] : '')));
+        $claimVillage = strtoupper(trim((string) (isset($claim['village_code']) ? $claim['village_code'] : '')));
+        $claimDevice = strtolower(trim((string) (isset($claim['installation_device_hash']) ? $claim['installation_device_hash'] : '')));
+        $hardwareHash = strtolower(trim((string) (isset($claim['hardware_device_hash']) ? $claim['hardware_device_hash'] : '')));
+        $issuedAt = isset($claim['iat']) ? (int) $claim['iat'] : 0;
+        $expiresAt = isset($claim['exp']) ? (int) $claim['exp'] : 0;
+        $now = time();
+
+        if ($version !== 1
+            || !hash_equals('smartdesa-activation', $issuer)
+            || !hash_equals('smartdesa-warga-api', $audience)
+            || !preg_match('/^[a-f0-9]{48}$/', $jti)
+            || !preg_match('/^[a-f0-9]{64}$/', $claimDevice)
+            || !preg_match('/^[a-f0-9]{64}$/', $hardwareHash)
+            || !hash_equals($villageCode, $claimVillage)
+            || !hash_equals(hash('sha256', $deviceId), $claimDevice)
+            || $issuedAt <= 0 || $expiresAt <= $issuedAt
+            || $issuedAt > $now + 60 || $expiresAt < $now
+            || ($expiresAt - $issuedAt) > 600) {
+            $this->fail('Grant tidak cocok dengan kampung atau perangkat ini.', 401, 'invalid_enrollment_grant');
+            return FALSE;
+        }
+
+        $this->db->where('expires_at <', date('Y-m-d H:i:s'))->delete('auto_enrollment_nonces');
+        $dbDebug = $this->db->db_debug;
+        $this->db->db_debug = FALSE;
+        $inserted = $this->db->insert('auto_enrollment_nonces', array(
+            'key_hash' => hash('sha256', 'activation-grant-v1'),
+            'nonce_hash' => hash('sha256', $jti),
+            'expires_at' => date('Y-m-d H:i:s', $expiresAt + 300),
+            'created_at' => date('Y-m-d H:i:s')
+        ));
+        $this->db->db_debug = $dbDebug;
+        if (!$inserted) {
+            $this->fail('Grant koneksi otomatis sudah pernah digunakan.', 409, 'replayed_enrollment_grant');
+            return FALSE;
+        }
+        return TRUE;
+    }
+
+    private function base64url_decode($value)
+    {
+        $value = (string) $value;
+        if ($value === '' || preg_match('/[^A-Za-z0-9_-]/', $value)) return FALSE;
+        $padding = strlen($value) % 4;
+        if ($padding > 0) $value .= str_repeat('=', 4 - $padding);
+        return base64_decode(strtr($value, '-_', '+/'), TRUE);
     }
 
     private function auto_enrollment_schema_ready()

@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS village_resident_snapshots (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   village_id CHAR(36) NOT NULL,
   snapshot_id CHAR(64) NOT NULL,
+  directory_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  directory_hash CHAR(64) NULL,
   snapshot_created_at DATETIME NOT NULL,
   batch_total INT UNSIGNED NOT NULL DEFAULT 1,
   finalized TINYINT(1) NOT NULL DEFAULT 0,
@@ -108,6 +110,7 @@ CREATE TABLE IF NOT EXISTS village_resident_snapshots (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_resident_snapshot (village_id, snapshot_id),
   KEY idx_resident_snapshot_latest (village_id, snapshot_created_at),
+  KEY idx_resident_snapshot_version (village_id, directory_version, finalized),
   CONSTRAINT fk_resident_snapshot_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -117,11 +120,31 @@ CREATE TABLE IF NOT EXISTS village_resident_snapshot_batches (
   snapshot_id CHAR(64) NOT NULL,
   batch_index INT UNSIGNED NOT NULL,
   batch_total INT UNSIGNED NOT NULL,
+  batch_hash CHAR(64) NOT NULL,
   resident_count INT UNSIGNED NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_resident_snapshot_batch (village_id, snapshot_id, batch_index),
   KEY idx_resident_batch_snapshot (village_id, snapshot_id),
   CONSTRAINT fk_resident_batch_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS village_resident_directory_staging (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  village_id CHAR(36) NOT NULL,
+  snapshot_id CHAR(64) NOT NULL,
+  local_citizen_key VARCHAR(120) NOT NULL,
+  nik_hash CHAR(64) NOT NULL,
+  kk_hash CHAR(64) NOT NULL,
+  name_hash CHAR(64) NOT NULL,
+  display_name VARCHAR(160) NOT NULL,
+  birth_date DATE NULL,
+  gender VARCHAR(20) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_resident_stage_source (village_id, snapshot_id, local_citizen_key),
+  UNIQUE KEY uniq_resident_stage_nik (village_id, snapshot_id, nik_hash),
+  KEY idx_resident_stage_snapshot (village_id, snapshot_id),
+  CONSTRAINT fk_resident_stage_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS resident_verification_attempts (
@@ -164,14 +187,25 @@ CREATE TABLE IF NOT EXISTS village_service_catalog (
   schema_version INT UNSIGNED NOT NULL DEFAULT 1,
   sort_order INT NOT NULL DEFAULT 0,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
+  submission_enabled TINYINT(1) NOT NULL DEFAULT 1,
+  availability_note VARCHAR(500) NULL,
   source_updated_at DATETIME NULL,
   published_at DATETIME NULL,
   source_hash CHAR(64) NULL,
+  source_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_village_service_key (village_id, service_key),
   KEY idx_village_service_active (village_id, is_active, sort_order),
   CONSTRAINT fk_village_service_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS village_service_catalog_state (
+  village_id CHAR(36) NOT NULL PRIMARY KEY,
+  last_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  last_hash CHAR(64) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_catalog_state_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS service_requests (
@@ -183,6 +217,7 @@ CREATE TABLE IF NOT EXISTS service_requests (
   catalog_service_id BIGINT UNSIGNED NULL,
   form_schema_version INT UNSIGNED NULL,
   status VARCHAR(30) NOT NULL DEFAULT 'submitted',
+  event_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
   payload_json JSON NOT NULL,
   local_reference VARCHAR(160) NULL,
   document_path VARCHAR(500) NULL,
@@ -290,6 +325,8 @@ CREATE TABLE IF NOT EXISTS sync_messages (
   aggregate_id VARCHAR(120) NOT NULL,
   direction VARCHAR(30) NOT NULL,
   operation VARCHAR(30) NOT NULL,
+  event_version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  payload_fingerprint CHAR(64) NULL,
   payload_json JSON NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
   attempts INT UNSIGNED NOT NULL DEFAULT 0,

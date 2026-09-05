@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS village_resident_snapshot_batches (
   snapshot_id CHAR(64) NOT NULL,
   batch_index INT UNSIGNED NOT NULL,
   batch_total INT UNSIGNED NOT NULL,
+  batch_hash CHAR(64) NOT NULL,
   resident_count INT UNSIGNED NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_resident_snapshot_batch (village_id, snapshot_id, batch_index),
