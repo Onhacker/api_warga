@@ -8,6 +8,7 @@ API_ROOT="${API_ROOT:-$HOME/domains/api-warga-smartdesa.mediaverse.co.id/public_
 PWA_ROOT="${PWA_ROOT:-$HOME/domains/warga-smartdesa.mediaverse.co.id/public_html}"
 PRIVATE_ROOT="${PRIVATE_ROOT:-$HOME/smartdesa-private}"
 API_HEALTH_URL="${API_HEALTH_URL:-https://api-warga-smartdesa.mediaverse.co.id/v1/health}"
+PWA_PUBLIC_URL="${PWA_PUBLIC_URL:-https://warga-smartdesa.mediaverse.co.id}"
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -33,8 +34,9 @@ if [[ ! -f "$API_ROOT/.env" || ! -f "$PWA_ROOT/.env" ]]; then
 fi
 
 printf 'Mengambil source terbaru...\n'
-git -C "$API_REPO" pull --ff-only origin main
-git -C "$PWA_REPO" pull --ff-only origin main
+# Source files must be web-readable; secrets below retain the private umask.
+(umask 022; git -C "$API_REPO" pull --ff-only origin main)
+(umask 022; git -C "$PWA_REPO" pull --ff-only origin main)
 
 printf 'Memasang dependensi PWA...\n'
 composer --working-dir="$PWA_REPO" install \
@@ -148,6 +150,9 @@ deploy_api
 deploy_pwa
 
 chmod 600 "$API_ROOT/.env" "$PWA_ROOT/.env"
+
+printf 'Memeriksa permission dan respons aset PWA...\n'
+php "$API_REPO/scripts/repair-pwa-assets.php" --root="$PWA_ROOT" --url="$PWA_PUBLIC_URL"
 
 printf 'Memeriksa API...\n'
 health_response="$(curl --fail --silent --show-error --max-time 30 "$API_HEALTH_URL")"
