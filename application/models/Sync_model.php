@@ -456,10 +456,18 @@ class Sync_model extends CI_Model
             return $this->resident_schema_ready;
         }
 
+        $profileGlobalUnique = TRUE;
         if ($this->db->table_exists('citizen_profiles')) {
             $this->ensure_field('citizen_profiles', 'local_citizen_key', "ALTER TABLE `citizen_profiles` ADD `local_citizen_key` VARCHAR(120) DEFAULT NULL");
             $this->ensure_field('citizen_profiles', 'name_hash', "ALTER TABLE `citizen_profiles` ADD `name_hash` CHAR(64) DEFAULT NULL");
             $this->ensure_index('citizen_profiles', 'uniq_citizen_source', 'UNIQUE KEY `uniq_citizen_source` (`village_id`, `local_citizen_key`)');
+            if ($this->db->field_exists('nik_hash', 'citizen_profiles')) {
+                $profileGlobalUnique = $this->ensure_index(
+                    'citizen_profiles',
+                    'uniq_citizen_nik_global',
+                    'UNIQUE KEY `uniq_citizen_nik_global` (`nik_hash`)'
+                );
+            }
         }
 
         if (!$this->db->table_exists('village_resident_directory')) {
@@ -481,6 +489,7 @@ class Sync_model extends CI_Model
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_resident_source` (`village_id`, `local_citizen_key`),
                 UNIQUE KEY `uniq_resident_nik` (`village_id`, `nik_hash`),
+                UNIQUE KEY `uniq_resident_nik_global` (`nik_hash`),
                 KEY `idx_resident_match` (`village_id`, `nik_hash`, `kk_hash`, `status`),
                 KEY `idx_resident_snapshot` (`village_id`, `snapshot_id`, `status`),
                 CONSTRAINT `fk_resident_directory_village` FOREIGN KEY (`village_id`) REFERENCES `village_tenants` (`id`) ON DELETE CASCADE
@@ -501,6 +510,11 @@ class Sync_model extends CI_Model
         }
         $this->ensure_index('village_resident_directory', 'uniq_resident_source', 'UNIQUE KEY `uniq_resident_source` (`village_id`, `local_citizen_key`)');
         $this->ensure_index('village_resident_directory', 'uniq_resident_nik', 'UNIQUE KEY `uniq_resident_nik` (`village_id`, `nik_hash`)');
+        $residentGlobalUnique = $this->ensure_index(
+            'village_resident_directory',
+            'uniq_resident_nik_global',
+            'UNIQUE KEY `uniq_resident_nik_global` (`nik_hash`)'
+        );
         $this->ensure_index('village_resident_directory', 'idx_resident_match', 'KEY `idx_resident_match` (`village_id`, `nik_hash`, `kk_hash`, `status`)');
         $this->ensure_index('village_resident_directory', 'idx_resident_snapshot', 'KEY `idx_resident_snapshot` (`village_id`, `snapshot_id`, `status`)');
 
@@ -583,7 +597,9 @@ class Sync_model extends CI_Model
             && $this->db->table_exists('village_resident_snapshot_batches')
             && $this->db->field_exists('batch_hash', 'village_resident_snapshot_batches')
             && $this->db->table_exists('village_resident_directory_staging')
-            && $this->db->table_exists('resident_verification_attempts');
+            && $this->db->table_exists('resident_verification_attempts')
+            && $profileGlobalUnique
+            && $residentGlobalUnique;
         return $this->resident_schema_ready;
     }
 
@@ -1118,6 +1134,23 @@ class Sync_model extends CI_Model
                 $stagedNiks[(string) $stagedRow['nik_hash']] = TRUE;
             }
 
+            // A NIK belongs to one village only. The unique database index is
+            // the final race-safe guard; this lookup gives the operator a
+            // useful message before the active directory is swapped.
+            if (!empty($stagedNiks)) {
+                $crossVillageConflict = $this->db->select('id')
+                    ->where('village_id !=', $villageId)
+                    ->where_in('nik_hash', array_keys($stagedNiks))
+                    ->limit(1)
+                    ->get('village_resident_directory')->row_array();
+                if ($crossVillageConflict) {
+                    return array(
+                        'success' => FALSE,
+                        'message' => 'Snapshot ditolak: terdapat NIK yang sudah terdaftar pada kampung lain. Periksa perpindahan atau data ganda terlebih dahulu.'
+                    );
+                }
+            }
+
             $latest = $this->db->where(array('village_id' => $villageId, 'finalized' => 1))
                 ->order_by('directory_version', 'DESC')->order_by('id', 'DESC')
                 ->limit(1)->get('village_resident_snapshots')->row_array();
@@ -1623,9 +1656,13 @@ class Sync_model extends CI_Model
         $query = $this->db->query('SHOW INDEX FROM `' . $table . '`');
         if ($query) {
             foreach ($query->result_array() as $row) {
-                if (isset($row['Key_name']) && (string) $row['Key_name'] === $name) return;
+                if (isset($row['Key_name']) && (string) $row['Key_name'] === $name) return TRUE;
             }
         }
-        $this->db->query('ALTER TABLE `' . $table . '` ADD ' . $definition);
+        $previousDebug = $this->db->db_debug;
+        $this->db->db_debug = FALSE;
+        $result = $this->db->query('ALTER TABLE `' . $table . '` ADD ' . $definition);
+        $this->db->db_debug = $previousDebug;
+        return (bool) $result;
     }
 }

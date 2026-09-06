@@ -227,6 +227,25 @@ try {
         'partial first snapshot does not claim registration directory is ready');
     check(push_message($sync, $installation, 'resident_directory', 'snapshot', $snapshot, 'resident-' . str_repeat('a', 78))['accepted'] === 1, 'API accepts long resident snapshot key');
     check(!empty(verify_resident($db, $sync, $identity)['success']), 'matching identity is verified after complete snapshot');
+    $duplicateSnapshot = $snapshot;
+    $duplicateSnapshot['snapshot_id'] = hash('sha256', 'snapshot-cross-village-duplicate');
+    $duplicateSnapshot['snapshot_created_at'] = date('c');
+    $duplicateResult = push_message($sync, $other, 'resident_directory', 'snapshot', $duplicateSnapshot);
+    check($duplicateResult['rejected'] === 1
+        && strpos($duplicateResult['results'][0]['message'], 'kampung lain') !== FALSE,
+        'same NIK cannot become active in another village');
+    $duplicateDirectory = array(
+        'village_id' => $other['village_id'],
+        'local_citizen_key' => str_repeat('b', 24) . ':2',
+        'nik_hash' => $directoryNikHash = hash_hmac('sha256', '9501010101010001', str_repeat('test-only-', 5)),
+        'kk_hash' => hash_hmac('sha256', '9501010101010003', str_repeat('test-only-', 5)),
+        'name_hash' => hash_hmac('sha256', 'other citizen', str_repeat('test-only-', 5)),
+        'display_name' => 'Other Citizen',
+        'snapshot_id' => hash('sha256', 'forced-cross-village-row'),
+        'status' => 'active'
+    );
+    check(!$db->insert('village_resident_directory', $duplicateDirectory),
+        'global database index blocks a cross-village NIK race');
     check(verify_resident($db, $sync, $otherIdentity)['error'] === 'resident_directory_unavailable',
         'completed snapshot does not make another village ready');
     $wrongIdentity = $identity;
@@ -237,6 +256,7 @@ try {
     check(verify_resident($db, $sync, $wrongIdentity)['error'] === 'resident_not_found', 'incorrect household number remains rejected');
     $directory = $db->where('village_id', $installation['village_id'])->get('village_resident_directory')->row_array();
     check($directory['birth_date'] === NULL, 'missing birth date is stored as NULL in strict MariaDB');
+    check($directory['nik_hash'] === $directoryNikHash, 'resident hash used by the unique guard is canonical');
     check(strlen($directory['nik_hash']) === 64 && $directory['nik_hash'] !== $snapshot['residents'][0]['nik'], 'central resident directory stores hashed identity');
     $stored = $db->where('aggregate_type', 'resident_directory')->get('sync_messages')->row_array();
     check(strpos($stored['payload_json'], '9501010101010001') === FALSE, 'central sync history does not retain raw resident identifiers');

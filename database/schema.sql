@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS citizen_profiles (
   KEY idx_citizen_village (village_id, verification_status),
   KEY idx_citizen_nik_hash (nik_hash),
   UNIQUE KEY uniq_citizen_source (village_id, local_citizen_key),
+  UNIQUE KEY uniq_citizen_nik_global (nik_hash),
   CONSTRAINT fk_citizen_profile_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_citizen_profile_village FOREIGN KEY (village_id) REFERENCES village_tenants(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS village_resident_directory (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_resident_source (village_id, local_citizen_key),
   UNIQUE KEY uniq_resident_nik (village_id, nik_hash),
+  UNIQUE KEY uniq_resident_nik_global (nik_hash),
   KEY idx_resident_match (village_id, nik_hash, kk_hash, status),
   KEY idx_resident_snapshot (village_id, snapshot_id, status),
   CONSTRAINT fk_resident_directory_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE

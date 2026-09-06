@@ -51,9 +51,22 @@ class Residents extends MY_Controller
             return $this->fail('Data penduduk kampung belum selesai tersinkron ke layanan warga.', 503, 'resident_directory_unavailable');
         }
 
+        $nikHash = $this->identity_hash($nik);
+        $crossVillageConflict = $this->db->select('id')
+            ->where('village_id !=', $village['id'])
+            ->where('nik_hash', $nikHash)
+            ->limit(1)->get('village_resident_directory')->row_array();
+        if ($crossVillageConflict) {
+            return $this->fail(
+                'NIK ini sudah tercatat pada kampung lain. Periksa data kependudukan atau proses perpindahan terlebih dahulu.',
+                409,
+                'resident_conflict'
+            );
+        }
+
         $row = $this->db->where(array(
                 'village_id' => $village['id'],
-                'nik_hash' => $this->identity_hash($nik),
+                'nik_hash' => $nikHash,
                 'kk_hash' => $this->identity_hash($kk),
                 'status' => 'active'
             ))
