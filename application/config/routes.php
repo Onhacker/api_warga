@@ -7,6 +7,7 @@ $route['v1/health'] = 'v1/health/index';
 $route['v1/installations/villages'] = 'v1/installations/villages';
 $route['v1/installations/enroll'] = 'v1/installations/enroll';
 $route['v1/installations/auto-enroll'] = 'v1/installations/auto_enroll';
+$route['v1/monitoring/summary'] = 'v1/monitoring/summary';
 $route['v1/sync/pull'] = 'v1/sync/pull';
 $route['v1/sync/push'] = 'v1/sync/push';
 $route['v1/sync/ack'] = 'v1/sync/ack';

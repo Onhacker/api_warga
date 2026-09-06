@@ -160,6 +160,99 @@ class MY_Controller extends CI_Controller
     }
 
     /**
+     * Autentikasi server-to-server untuk dashboard monitoring pusat.
+     * Kredensial ini terpisah dari secret instalasi desa dan tidak pernah
+     * diterima dari browser warga maupun installer desa.
+     */
+    protected function authenticate_monitoring()
+    {
+        $key = api_header('X-SmartDesa-Monitor-Key');
+        $timestamp = api_header('X-SmartDesa-Monitor-Timestamp');
+        $nonce = api_header('X-SmartDesa-Monitor-Nonce');
+        $signature = strtolower(api_header('X-SmartDesa-Monitor-Signature'));
+
+        if (!preg_match('/^[A-Za-z0-9._-]{16,128}$/', $key)
+            || !preg_match('/^\d{10}$/', $timestamp)
+            || !preg_match('/^[A-Za-z0-9._-]{16,128}$/', $nonce)
+            || !preg_match('/^[a-f0-9]{64}$/', $signature)) {
+            $this->fail('Header autentikasi monitoring belum lengkap.', 401, 'authentication_required');
+            return FALSE;
+        }
+
+        $configuredKey = trim((string) getenv('WARGA_MONITOR_API_KEY'));
+        $configuredSecret = trim((string) getenv('WARGA_MONITOR_API_SECRET'));
+        if ($configuredKey === '' || !preg_match('/^[A-Za-z0-9._-]{16,128}$/', $configuredKey)
+            || $configuredSecret === '' || strlen($configuredSecret) < 32
+            || $this->is_placeholder_monitoring_credential($configuredKey . $configuredSecret)) {
+            $this->fail('Kredensial monitoring API belum dikonfigurasi.', 503, 'monitoring_not_configured');
+            return FALSE;
+        }
+        if (hash_equals($configuredKey, $configuredSecret)) {
+            $this->fail('Kredensial monitoring API tidak valid.', 503, 'monitoring_not_configured');
+            return FALSE;
+        }
+
+        if (!hash_equals($configuredKey, $key)) {
+            $this->fail('Kredensial monitoring tidak valid.', 401, 'invalid_credentials');
+            return FALSE;
+        }
+
+        $ttl = min(900, max(60, (int) (getenv('WARGA_MONITOR_SIGNATURE_TTL') ?: (getenv('API_SIGNATURE_TTL') ?: 300))));
+        if (abs(time() - (int) $timestamp) > $ttl) {
+            $this->fail('Waktu permintaan monitoring sudah kedaluwarsa.', 401, 'stale_request');
+            return FALSE;
+        }
+
+        $db = $this->db;
+        if (!is_object($db) || !$db->table_exists('monitor_request_nonces')) {
+            $this->fail('Skema autentikasi monitoring belum dipasang.', 503, 'migration_required');
+            return FALSE;
+        }
+
+        $canonical = $timestamp . "\n" . $nonce . "\n" . strtoupper($this->input->method(TRUE)) . "\n" . $this->request_path() . "\n" . $this->rawBody;
+        $expected = hash_hmac('sha256', $canonical, $configuredSecret);
+        if (!hash_equals($expected, $signature)) {
+            $this->fail('Tanda tangan permintaan monitoring tidak sesuai.', 401, 'invalid_signature');
+            return FALSE;
+        }
+
+        $keyHash = hash('sha256', $key);
+        $nonceHash = hash('sha256', $nonce);
+        $db->where('expires_at <', date('Y-m-d H:i:s'))->delete('monitor_request_nonces');
+
+        // A replay is expected input, not a database error. Suppress CI's
+        // development DB page so the conflict can be returned as JSON 409.
+        $previousDbDebug = $db->db_debug;
+        $db->db_debug = FALSE;
+        $inserted = $db->insert('monitor_request_nonces', array(
+            'key_hash' => $keyHash,
+            'nonce_hash' => $nonceHash,
+            'expires_at' => date('Y-m-d H:i:s', time() + $ttl)
+        ));
+        $db->db_debug = $previousDbDebug;
+        if (!$inserted) {
+            $replayed = $db
+                ->where(array('key_hash' => $keyHash, 'nonce_hash' => $nonceHash))
+                ->count_all_results('monitor_request_nonces') > 0;
+            if ($replayed) {
+                $this->fail('Permintaan monitoring duplikat ditolak.', 409, 'replayed_request');
+                return FALSE;
+            }
+
+            log_message('error', 'Gagal menyimpan nonce monitoring: ' . json_encode($db->error()));
+            $this->fail('Autentikasi monitoring sedang tidak tersedia.', 503, 'monitoring_unavailable');
+            return FALSE;
+        }
+
+        return TRUE;
+    }
+
+    private function is_placeholder_monitoring_credential($value)
+    {
+        return preg_match('/(?:replace|change|ganti)[_\s-]*(?:with|before|dengan)|example|placeholder/i', (string) $value) === 1;
+    }
+
+    /**
      * Catat aktivitas instalasi tanpa pernah mengubah scope desanya.
      * last_seen_at dicatat saat autentikasi; last_sync_at hanya dicatat
      * setelah endpoint sinkronisasi berhasil memproses permintaan.

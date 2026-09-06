@@ -18,6 +18,7 @@ POST /v1/installations/auto-enroll
 POST /v1/sync/pull
 POST /v1/sync/push
 POST /v1/sync/ack
+POST /v1/monitoring/summary
 GET  /v1/documents/{document-id}
 POST /v1/requests/{request-id}/official-document
 ```
@@ -41,6 +42,16 @@ Timestamp hanya berlaku selama `API_SIGNATURE_TTL` detik. Nonce tidak boleh digu
 Endpoint dokumen juga wajib memakai header HMAC yang sama. ID dokumen harus berasal dari
 metadata permohonan yang diterima SmartDesa; API memeriksa desa pemilik sebelum membaca
 berkas dari `PRIVATE_STORAGE_PATH`.
+
+`/v1/monitoring/summary` adalah endpoint privat server-ke-server untuk dashboard Super Admin
+SmartDesa pusat. Endpoint ini memakai header `X-SmartDesa-Monitor-Key`,
+`X-SmartDesa-Monitor-Timestamp`, `X-SmartDesa-Monitor-Nonce`, dan
+`X-SmartDesa-Monitor-Signature` dengan format pesan kanonik yang sama. Key dan secret
+monitoring harus berbeda dari kredensial instalasi desa, disimpan hanya pada `.env` API
+dan pengaturan API SmartDesa pusat, serta tidak boleh masuk PWA atau installer. Responsnya
+hanya berisi metrik agregat per kampung: status instalasi, waktu koneksi, versi, jumlah
+penduduk/katalog/akun/permohonan, dan antrean. NIK, No. KK, password, payload, dan dokumen
+tidak dikirim ke dashboard.
 
 Endpoint `official-document` menerima PDF resmi setelah permohonan berstatus `approved`.
 Isi PDF, hash SHA-256, desa pemilik, dan identitas permohonan diverifikasi sebelum status
@@ -73,7 +84,7 @@ berpindah ke grant.
 
 Untuk deployment rutin di Hostinger setelah instalasi awal, jalankan satu perintah berikut
 dari repository API. Skrip mempertahankan `.env`, upload, log, dan data runtime; membuat
-backup database; menjalankan migrasi `006` sampai `015`; lalu memeriksa health API.
+backup database; menjalankan migrasi `006` sampai `015`, `018`, dan `019`; lalu memeriksa health API.
 
 ```bash
 cd "$HOME/repositories/api_warga"
@@ -81,10 +92,12 @@ bash scripts/deploy-hostinger.sh
 ```
 
 1. Buat database `smartdesa_warga`, impor `database/schema.sql`, lalu `database/seed.sql` dari proyek PWA.
-2. Jika database lama, impor semua berkas `database/migrations/001_*.sql` sampai
-   `database/migrations/015_*.sql` sesuai urutan. Migrasi `009` menambahkan metadata PDF resmi,
-   `010` memperpanjang `sync_messages.aggregate_id`, dan `015` menambahkan fingerprint pesan,
-   versi direktori, serta staging snapshot atomik.
+2. Jika database lama, impor berkas `database/migrations/001_*.sql` sampai
+   `database/migrations/015_*.sql` sesuai urutan, lalu `018_global_nik_uniqueness.sql` dan
+   `019_monitoring_auth.sql`. Migrasi `009` menambahkan metadata PDF resmi, `010`
+   memperpanjang `sync_messages.aggregate_id`, `015` menambahkan fingerprint pesan, versi
+   direktori, serta staging snapshot atomik, sedangkan `019` menambahkan pencegah replay
+   untuk dashboard monitoring.
 3. Upload isi folder ini ke document root `api-warga-smartdesa.mediaverse.co.id`.
 4. Salin `.env.example` menjadi `.env`, isi `APP_KEY`, database, dan `WARGA_ALLOWED_ORIGIN`.
 5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat ditulis PHP,
@@ -121,6 +134,13 @@ bash scripts/deploy-hostinger.sh
 13. Uji `GET /v1/health`, koneksi otomatis satu desa pilot, pemutusan bootstrap lokal,
     katalog layanan, verifikasi penduduk, pull/push, serta penerbitan dan unduh PDF sebelum
     merilis installer ke seluruh desa.
+
+14. Untuk mengaktifkan dashboard monitoring, isi `WARGA_MONITOR_API_KEY` dan
+    `WARGA_MONITOR_API_SECRET` pada `.env` API setelah migrasi `019` berhasil. Di SmartDesa
+    pusat buka **Pengaturan API**, isi baris **API Monitoring Layanan Warga** dengan URL API,
+    key, dan secret yang sama, aktifkan layanan, lalu buka **SuAdmin Area > Monitoring
+    Layanan Warga**. Filter kabupaten hanya dibuat dari Event & User Desa yang berstatus
+    aktif. Modul monitoring pusat sengaja dikecualikan dari installer desa.
 
 Tes regresi penerbitan dapat dijalankan pada mesin pengembangan yang memiliki MariaDB:
 
