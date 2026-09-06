@@ -9,6 +9,7 @@ PWA_ROOT="${PWA_ROOT:-$HOME/domains/warga-smartdesa.mediaverse.co.id/public_html
 PRIVATE_ROOT="${PRIVATE_ROOT:-$HOME/smartdesa-private}"
 API_HEALTH_URL="${API_HEALTH_URL:-https://api-warga-smartdesa.mediaverse.co.id/v1/health}"
 PWA_PUBLIC_URL="${PWA_PUBLIC_URL:-https://warga-smartdesa.mediaverse.co.id}"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -35,8 +36,14 @@ fi
 
 printf 'Mengambil source terbaru...\n'
 # Source files must be web-readable; secrets below retain the private umask.
+script_blob_before="$(git -C "$API_REPO" rev-parse HEAD:scripts/deploy-hostinger.sh 2>/dev/null || true)"
 (umask 022; git -C "$API_REPO" pull --ff-only origin main)
 (umask 022; git -C "$PWA_REPO" pull --ff-only origin main)
+script_blob_after="$(git -C "$API_REPO" rev-parse HEAD:scripts/deploy-hostinger.sh 2>/dev/null || true)"
+if [[ -n "$script_blob_before" && "$script_blob_before" != "$script_blob_after" ]]; then
+    printf 'Skrip deployment berubah setelah pull; menjalankan ulang versi terbaru...\n'
+    exec bash "$SCRIPT_PATH" "$@"
+fi
 
 printf 'Memasang dependensi PWA...\n'
 composer --working-dir="$PWA_REPO" install \
