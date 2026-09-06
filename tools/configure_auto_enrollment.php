@@ -48,8 +48,12 @@ function warga_config_valid_secret($secret)
 
 function warga_config_absolute($path)
 {
-    return trim((string) $path) !== ''
-        && preg_match('/^(?:[A-Za-z]:[\\\/]|[\\\/]{1,2})/', trim((string) $path)) === 1;
+    $path = trim((string) $path);
+    if ($path === '') return false;
+
+    // Use a non-slash delimiter so the Windows and Unix separators remain
+    // readable and are not accidentally parsed as regex modifiers.
+    return preg_match('~^(?:[A-Za-z]:[\\\\/]|[\\\\/]{1,2})~', $path) === 1;
 }
 
 function warga_config_inside($path, $root)
