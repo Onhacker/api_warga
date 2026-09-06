@@ -8,6 +8,9 @@ foreach (array('sekdes','kepala-desa') as $role) $staffSnapshot['staff'][]=array
     'name'=>'Test '.$role,'email'=>$role.'@example.test','role'=>$role,
     'password_hash'=>password_hash('test-password-only',PASSWORD_BCRYPT),'is_active'=>1);
 check(push_message($sync,$installation,'staff_accounts','snapshot',$staffSnapshot)['accepted']===1,'local staff snapshot creates two PWA accounts');
+$staffState=$sync->staff_accounts_state($installation);
+check(!empty($staffState['ready']) && (int)$staffState['source_revision']===100
+    && (int)$staffState['staff_count']===2,'pull state confirms staff accounts without exposing account data');
 $staffUsers=array();
 foreach ($staffSnapshot['staff'] as $person) {
     $staffUsers[$person['role']]=$db->where('email',$person['email'])->get('users')->row_array();

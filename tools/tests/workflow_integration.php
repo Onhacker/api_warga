@@ -380,6 +380,9 @@ try {
     $db->where('village_id', $installation['village_id'])->delete('village_resident_snapshots');
     check(empty($sync->resident_directory_state($installation)['ready']),
         'pull state reports a reset resident directory so local SmartDesa can republish it');
+    $db->where('village_id', $installation['village_id'])->delete('warga_village_config_versions');
+    check(empty($sync->staff_accounts_state($installation)['ready']),
+        'pull state reports reset staff accounts so local SmartDesa can republish them');
     echo "OK: $checks API/PWA workflow checks passed. HTTP upload/authentication are outside this test.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, 'FAIL: ' . $e->getMessage() . "\n" . ($db ? $db->last_query() . "\n" : '') . $e->getTraceAsString() . "\n");

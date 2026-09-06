@@ -134,6 +134,56 @@ class Sync_model extends CI_Model
         );
     }
 
+    /**
+     * Report whether the latest local staff snapshot still exists centrally.
+     * No account identity or credential is exposed through the pull response.
+     */
+    public function staff_accounts_state(array $installation)
+    {
+        $state = array(
+            'ready' => FALSE,
+            'source_revision' => 0,
+            'staff_count' => 0
+        );
+        if (getenv('API_DEMO_MODE') === '1') return $state;
+
+        $villageId = trim((string) (isset($installation['village_id']) ? $installation['village_id'] : ''));
+        if ($villageId === ''
+            || !$this->db->table_exists('warga_village_config_versions')
+            || !$this->db->table_exists('warga_staff_sources')
+            || !$this->db->table_exists('users')) {
+            return $state;
+        }
+
+        $version = $this->db
+            ->select('source_revision')
+            ->where('village_id', $villageId)
+            ->limit(1)
+            ->get('warga_village_config_versions')
+            ->row_array();
+        $revision = max(0, (int) (isset($version['source_revision']) ? $version['source_revision'] : 0));
+        if (!$version || $revision < 1) return $state;
+
+        $sourceCount = (int) $this->db
+            ->where('village_id', $villageId)
+            ->count_all_results('warga_staff_sources');
+        $linked = $this->db
+            ->select('COUNT(*) AS linked_count, COALESCE(SUM(CASE WHEN u.is_active = 1 THEN 1 ELSE 0 END), 0) AS active_count', FALSE)
+            ->from('warga_staff_sources s')
+            ->join('users u', 'u.id=s.user_id AND u.village_id=s.village_id', 'inner')
+            ->where('s.village_id', $villageId)
+            ->get()
+            ->row_array();
+        $linkedCount = (int) (isset($linked['linked_count']) ? $linked['linked_count'] : 0);
+
+        return array(
+            'ready' => $sourceCount === $linkedCount,
+            'source_revision' => $revision,
+            'staff_count' => $sourceCount === $linkedCount
+                ? (int) (isset($linked['active_count']) ? $linked['active_count'] : 0) : 0
+        );
+    }
+
     private function request_citizen_local_key($requestId, $villageId)
     {
         if (!$this->db->table_exists('citizen_profiles')
