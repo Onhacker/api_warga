@@ -13,12 +13,14 @@ class Sync extends MY_Controller
         $limit = isset($payload['limit']) ? (int) $payload['limit'] : 50;
         $this->load->model('Sync_model');
         $messages = $this->Sync_model->pull($installation, $limit);
+        $residentDirectory = $this->Sync_model->resident_directory_state($installation);
         $this->touch_installation(TRUE);
         return $this->respond(array(
             'success' => TRUE,
             'installation' => $installation['installation_code'],
             'village' => array('code' => $installation['village_code'], 'name' => $installation['village_name']),
             'messages' => $messages,
+            'sync_state' => array('resident_directory' => $residentDirectory),
             'server_time' => date('c')
         ));
     }

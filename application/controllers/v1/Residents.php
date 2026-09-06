@@ -42,12 +42,11 @@ class Residents extends MY_Controller
             return $this->fail('Data identitas tidak cocok dengan kampung yang dipilih.', 422, 'resident_not_found');
         }
 
-        // A new village is not searchable until its first full snapshot arrives.
-        // An empty, completed snapshot is valid and still uses normal matching.
-        $snapshot = $this->db->select('id')
-            ->where(array('village_id' => $village['id'], 'finalized' => 1))
-            ->limit(1)->get('village_resident_snapshots')->row_array();
-        if (!$snapshot) {
+        // A new or partially reset village is not searchable until its full
+        // active snapshot is present. An intentionally empty snapshot is
+        // still ready and proceeds to normal matching below.
+        $directoryState = $this->Sync_model->resident_directory_state(array('village_id' => $village['id']));
+        if (empty($directoryState['ready'])) {
             return $this->fail('Data penduduk kampung belum selesai tersinkron ke layanan warga.', 503, 'resident_directory_unavailable');
         }
 
@@ -73,6 +72,20 @@ class Residents extends MY_Controller
             ->limit(1)->get('village_resident_directory')->row_array();
         if (!$row || !hash_equals((string) $row['name_hash'], $this->identity_hash($name))) {
             return $this->fail('NIK, No. KK, dan nama tidak sesuai dengan data penduduk kampung yang dipilih.', 422, 'resident_not_found');
+        }
+
+        if ($this->db->table_exists('citizen_profiles')
+            && $this->db->field_exists('nik_hash', 'citizen_profiles')) {
+            $existingAccount = $this->db->select('user_id')
+                ->where('nik_hash', $nikHash)
+                ->limit(1)->get('citizen_profiles')->row_array();
+            if ($existingAccount) {
+                return $this->fail(
+                    'NIK ini sudah memiliki akun layanan warga. Silakan gunakan menu masuk.',
+                    409,
+                    'resident_account_exists'
+                );
+            }
         }
 
         return $this->respond(array(

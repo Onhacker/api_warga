@@ -227,6 +227,11 @@ try {
         'partial first snapshot does not claim registration directory is ready');
     check(push_message($sync, $installation, 'resident_directory', 'snapshot', $snapshot, 'resident-' . str_repeat('a', 78))['accepted'] === 1, 'API accepts long resident snapshot key');
     check(!empty(verify_resident($db, $sync, $identity)['success']), 'matching identity is verified after complete snapshot');
+    $directoryState = $sync->resident_directory_state($installation);
+    check(!empty($directoryState['ready'])
+        && preg_match('/^[a-f0-9]{64}$/D', $directoryState['directory_hash'])
+        && $directoryState['resident_count'] === 1,
+        'pull state exposes the active directory commitment without resident identity data');
     $duplicateSnapshot = $snapshot;
     $duplicateSnapshot['snapshot_id'] = hash('sha256', 'snapshot-cross-village-duplicate');
     $duplicateSnapshot['snapshot_created_at'] = date('c');
@@ -261,7 +266,16 @@ try {
     $stored = $db->where('aggregate_type', 'resident_directory')->get('sync_messages')->row_array();
     check(strpos($stored['payload_json'], '9501010101010001') === FALSE, 'central sync history does not retain raw resident identifiers');
     $db->insert('users', array('id' => 1, 'role_id' => 1, 'village_id' => $installation['village_id'], 'name' => 'Test Citizen', 'username' => 'test-only', 'password_hash' => 'not-a-login'));
-    $db->insert('citizen_profiles', array('id' => api_uuid(), 'user_id' => 1, 'village_id' => $installation['village_id'], 'local_citizen_key' => $source, 'verification_status' => 'verified'));
+    $db->insert('citizen_profiles', array(
+        'id' => api_uuid(),
+        'user_id' => 1,
+        'village_id' => $installation['village_id'],
+        'local_citizen_key' => $source,
+        'nik_hash' => $directoryNikHash,
+        'verification_status' => 'verified'
+    ));
+    check(verify_resident($db, $sync, $identity)['error'] === 'resident_account_exists',
+        'a resident NIK with an existing account cannot register again');
     $citizen = array('id' => 1, 'village_id' => $installation['village_id'], 'name' => 'Test Citizen', 'phone' => '', 'local_citizen_key' => $source);
     $auth = new Auth_model();
     $community = new Community_model();
@@ -352,6 +366,9 @@ try {
     $empty['snapshot_created_at'] = date('c');
     $empty['residents'] = array();
     check(push_message($sync, $installation, 'resident_directory', 'snapshot', $empty)['accepted'] === 1, 'new empty snapshot accepted');
+    $emptyState = $sync->resident_directory_state($installation);
+    check(!empty($emptyState['ready']) && $emptyState['resident_count'] === 0,
+        'an intentionally empty finalized directory remains ready');
     check(verify_resident($db, $sync, $identity)['error'] === 'resident_not_found',
         'completed empty directory rejects removed resident without claiming sync is missing');
     check(!$auth->citizen_is_verified(1) && empty($requests->create($citizen, $data)['success']), 'removed resident cannot make new requests');
@@ -360,6 +377,9 @@ try {
     check(push_message($sync, $installation, 'service_catalog', 'upsert', array('services' => array(), 'catalog_empty' => true))['accepted'] === 1, 'empty catalog is explicitly unpublished');
     check($requests->service_types($installation['village_id']) === array()
         && count($requests->service_types($other['village_id'])) === 1, 'unpublishing catalog affects only owning village');
+    $db->where('village_id', $installation['village_id'])->delete('village_resident_snapshots');
+    check(empty($sync->resident_directory_state($installation)['ready']),
+        'pull state reports a reset resident directory so local SmartDesa can republish it');
     echo "OK: $checks API/PWA workflow checks passed. HTTP upload/authentication are outside this test.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, 'FAIL: ' . $e->getMessage() . "\n" . ($db ? $db->last_query() . "\n" : '') . $e->getTraceAsString() . "\n");

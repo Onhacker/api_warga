@@ -71,6 +71,69 @@ class Sync_model extends CI_Model
         return $result;
     }
 
+    /**
+     * Return a privacy-safe commitment to the active resident directory.
+     * Local SmartDesa uses this to republish an unchanged snapshot after a
+     * controlled server reset or when the central directory is incomplete.
+     */
+    public function resident_directory_state(array $installation)
+    {
+        $state = array(
+            'ready' => FALSE,
+            'directory_hash' => '',
+            'directory_version' => 0,
+            'snapshot_id' => '',
+            'resident_count' => 0
+        );
+        if (getenv('API_DEMO_MODE') === '1') return $state;
+
+        $villageId = trim((string) (isset($installation['village_id']) ? $installation['village_id'] : ''));
+        if ($villageId === ''
+            || !$this->db->table_exists('village_resident_snapshots')
+            || !$this->db->table_exists('village_resident_snapshot_batches')
+            || !$this->db->table_exists('village_resident_directory')) {
+            return $state;
+        }
+
+        $snapshot = $this->db
+            ->select('snapshot_id, directory_version, directory_hash, batch_total')
+            ->where(array('village_id' => $villageId, 'finalized' => 1))
+            ->order_by('directory_version', 'DESC')
+            ->order_by('snapshot_created_at', 'DESC')
+            ->order_by('id', 'DESC')
+            ->limit(1)
+            ->get('village_resident_snapshots')
+            ->row_array();
+        if (!$snapshot) return $state;
+
+        $batchSummary = $this->db
+            ->select('COUNT(*) AS batch_count, COALESCE(SUM(resident_count), 0) AS resident_count', FALSE)
+            ->where(array('village_id' => $villageId, 'snapshot_id' => (string) $snapshot['snapshot_id']))
+            ->get('village_resident_snapshot_batches')
+            ->row_array();
+        $directoryCount = (int) $this->db
+            ->where(array(
+                'village_id' => $villageId,
+                'snapshot_id' => (string) $snapshot['snapshot_id'],
+                'status' => 'active'
+            ))
+            ->count_all_results('village_resident_directory');
+        $expectedResidents = (int) (isset($batchSummary['resident_count']) ? $batchSummary['resident_count'] : 0);
+        $batchCount = (int) (isset($batchSummary['batch_count']) ? $batchSummary['batch_count'] : 0);
+        $hash = strtolower(trim((string) (isset($snapshot['directory_hash']) ? $snapshot['directory_hash'] : '')));
+        $ready = preg_match('/^[a-f0-9]{64}$/D', $hash)
+            && $batchCount === (int) $snapshot['batch_total']
+            && $directoryCount === $expectedResidents;
+
+        return array(
+            'ready' => (bool) $ready,
+            'directory_hash' => $ready ? $hash : '',
+            'directory_version' => max(0, (int) $snapshot['directory_version']),
+            'snapshot_id' => $ready ? (string) $snapshot['snapshot_id'] : '',
+            'resident_count' => $ready ? $directoryCount : 0
+        );
+    }
+
     private function request_citizen_local_key($requestId, $villageId)
     {
         if (!$this->db->table_exists('citizen_profiles')
