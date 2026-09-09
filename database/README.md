@@ -20,4 +20,6 @@ Untuk dashboard monitoring pada server SmartDesa pusat, jalankan `migrations/019
 
 Setelah itu jalankan `migrations/020_reinstall_enrollment.sql`. Migrasi ini menyimpan fingerprint perangkat yang sudah dibuktikan oleh grant aktivasi, sehingga instalasi ulang pada laptop yang sama dapat terhubung kembali tanpa membuka akses ke perangkat lain.
 
+Untuk fitur **Rebind / Pindah Kampung** pada dashboard Super Admin, jalankan `migrations/021_installation_rebind_audit.sql`. Operasi ini merotasi kredensial instalasi sumber dan tujuan, menyimpan jejak audit tanpa secret asli, serta tidak menghapus atau memindahkan data penduduk, surat, akun, permohonan, maupun dokumen.
+
 Migration `004` dan endpoint bootstrap lama hanya dipertahankan sebagai jalur pemulihan terkontrol. Alur utama memakai grant aktivasi sekali pakai: aplikasi lokal membaca kode kampung dari identitas instalasi, meminta grant singkat dari server aktivasi, lalu API menerbitkan kredensial khusus instalasi. Secret penandatangan grant hanya berada di server aktivasi dan API; jangan menyimpannya di repository, `.env.build`, installer, atau membagikannya kepada desa.

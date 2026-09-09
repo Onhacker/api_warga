@@ -100,6 +100,42 @@ class Monitoring_model extends CI_Model
         );
     }
 
+    public function village_options(array $payload)
+    {
+        $selectors = $this->normalise_selectors(isset($payload['regencies']) ? $payload['regencies'] : array());
+        if (empty($selectors)) {
+            return array('success' => FALSE, 'error' => 'invalid_scope', 'message' => 'Daftar kabupaten monitoring belum valid.');
+        }
+
+        $tenants = $this->load_tenants($selectors, NULL);
+        if ($tenants === FALSE) {
+            return array('success' => FALSE, 'error' => 'service_unavailable', 'message' => 'Daftar kampung pada API belum dapat dimuat.');
+        }
+
+        $villageIds = array();
+        foreach ($tenants as $tenant) {
+            $id = trim((string) (isset($tenant['id']) ? $tenant['id'] : ''));
+            if ($id !== '') $villageIds[] = $id;
+        }
+        $installations = $this->installation_metrics($villageIds);
+        $villages = array();
+        foreach ($tenants as $tenant) {
+            $villageId = trim((string) (isset($tenant['id']) ? $tenant['id'] : ''));
+            $installation = isset($installations[$villageId])
+                ? $installations[$villageId] : $this->empty_installation_metric();
+            $villages[] = array(
+                'village_code' => (string) (isset($tenant['village_code']) ? $tenant['village_code'] : ''),
+                'village_name' => (string) (isset($tenant['village_name']) ? $tenant['village_name'] : ''),
+                'district_code' => (string) (isset($tenant['district_code']) ? $tenant['district_code'] : ''),
+                'district_name' => (string) (isset($tenant['district_name']) ? $tenant['district_name'] : ''),
+                'regency_code' => (string) (isset($tenant['regency_code']) ? $tenant['regency_code'] : ''),
+                'regency_name' => (string) (isset($tenant['regency_name']) ? $tenant['regency_name'] : ''),
+                'installation_status' => (string) $installation['installation_status']
+            );
+        }
+        return array('success' => TRUE, 'villages' => $villages);
+    }
+
     private function load_tenants(array $selectors, $selected)
     {
         if (!$this->table_ready('village_tenants')) return FALSE;
