@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS village_installations (
   enrollment_expires_at DATETIME NULL,
   enrollment_used_at DATETIME NULL,
   enrollment_device_hash CHAR(64) NULL,
+  enrollment_hardware_hash CHAR(64) NULL,
   app_version VARCHAR(50) NULL,
   last_seen_at DATETIME NULL,
   last_sync_at DATETIME NULL,

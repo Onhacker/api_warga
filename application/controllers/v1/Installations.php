@@ -191,8 +191,10 @@ class Installations extends MY_Controller
             return $this->fail('Identitas kampung atau perangkat lokal tidak valid.', 422, 'invalid_auto_enrollment');
         }
 
+        $grant_claim = array();
         if ($grant !== '') {
-            if (!$this->authenticate_enrollment_grant($grant, $villageCode, $deviceId)) return;
+            $grant_claim = $this->authenticate_enrollment_grant($grant, $villageCode, $deviceId);
+            if ($grant_claim === FALSE) return;
         } elseif (!$this->legacy_auto_enrollment_enabled()) {
             $this->record_failed_enrollment($rateScope);
             return $this->fail('Grant koneksi otomatis belum tersedia atau sudah kedaluwarsa.', 401, 'enrollment_grant_required');
@@ -238,8 +240,17 @@ class Installations extends MY_Controller
 
         $row = $rows[0];
         $alreadyUsed = !empty($row['enrollment_used_at']);
-        if ($alreadyUsed && (empty($row['enrollment_device_hash'])
-            || !hash_equals((string) $row['enrollment_device_hash'], $deviceHash))) {
+        $same_installation = !empty($row['enrollment_device_hash'])
+            && hash_equals((string) $row['enrollment_device_hash'], $deviceHash);
+        $grant_hardware_hash = strtolower(trim((string) (isset($grant_claim['hardware_device_hash'])
+            ? $grant_claim['hardware_device_hash'] : '')));
+        $same_hardware = $grant_hardware_hash !== ''
+            && preg_match('/^[a-f0-9]{64}$/', $grant_hardware_hash)
+            && (!empty($row['enrollment_hardware_hash'])
+                ? hash_equals((string) $row['enrollment_hardware_hash'], $grant_hardware_hash)
+                : true);
+        $allow_rebind = !empty($grant_claim) && $same_hardware;
+        if ($alreadyUsed && !$same_installation && !$allow_rebind) {
             $this->db->trans_rollback();
             $this->record_failed_enrollment($rateScope);
             return $this->fail('Kampung sudah terhubung pada perangkat lain. Hubungi pengelola pusat untuk memindahkan perangkat.', 409, 'enrollment_used');
@@ -255,9 +266,12 @@ class Installations extends MY_Controller
             'last_seen_at' => $now,
             'updated_at' => $now
         );
-        if (!$alreadyUsed) {
+        if (!$alreadyUsed || $allow_rebind) {
             $update['enrollment_used_at'] = $now;
             $update['enrollment_device_hash'] = $deviceHash;
+        }
+        if ($grant_hardware_hash !== '' && preg_match('/^[a-f0-9]{64}$/', $grant_hardware_hash)) {
+            $update['enrollment_hardware_hash'] = $grant_hardware_hash;
         }
         if ($appVersion !== '') $update['app_version'] = $appVersion;
 
@@ -386,7 +400,7 @@ class Installations extends MY_Controller
             $this->fail('Grant koneksi otomatis sudah pernah digunakan.', 409, 'replayed_enrollment_grant');
             return FALSE;
         }
-        return TRUE;
+        return $claim;
     }
 
     private function base64url_decode($value)
@@ -456,7 +470,8 @@ class Installations extends MY_Controller
             && $this->db->field_exists('enrollment_code_hash', 'village_installations')
             && $this->db->field_exists('enrollment_expires_at', 'village_installations')
             && $this->db->field_exists('enrollment_used_at', 'village_installations')
-            && $this->db->field_exists('enrollment_device_hash', 'village_installations');
+            && $this->db->field_exists('enrollment_device_hash', 'village_installations')
+            && $this->db->field_exists('enrollment_hardware_hash', 'village_installations');
     }
 
     private function normalize_enrollment_code($value)

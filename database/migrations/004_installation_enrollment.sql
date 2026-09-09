@@ -4,7 +4,8 @@ ALTER TABLE village_installations
   ADD COLUMN IF NOT EXISTS enrollment_code_hash CHAR(64) NULL AFTER sync_secret_encrypted,
   ADD COLUMN IF NOT EXISTS enrollment_expires_at DATETIME NULL AFTER enrollment_code_hash,
   ADD COLUMN IF NOT EXISTS enrollment_used_at DATETIME NULL AFTER enrollment_expires_at,
-  ADD COLUMN IF NOT EXISTS enrollment_device_hash CHAR(64) NULL AFTER enrollment_used_at;
+  ADD COLUMN IF NOT EXISTS enrollment_device_hash CHAR(64) NULL AFTER enrollment_used_at,
+  ADD COLUMN IF NOT EXISTS enrollment_hardware_hash CHAR(64) NULL AFTER enrollment_device_hash;
 
 SET @enrollment_index_exists := (
   SELECT COUNT(*)
