@@ -95,13 +95,18 @@ try {
     }
     $db->insert('roles', array('id' => 1, 'name' => 'Warga', 'slug' => 'warga'));
     $db->insert('users', array('id' => 1, 'role_id' => 1, 'village_id' => $village, 'name' => 'Test Citizen', 'username' => 'test-citizen', 'password_hash' => 'not-a-login'));
-    $db->insert('service_types', array('id' => 1, 'slug' => 'test-letter', 'name' => 'Test Letter', 'short_name' => 'Test'));
+    $db->insert('service_types', array('id' => 1, 'slug' => 'surat-permohonan-pengisian-bbm-solar-bersubsidi', 'name' => 'Test Letter', 'short_name' => 'Test'));
+    $db->insert('village_service_catalog', array('village_id' => $village,
+        'service_key' => 'surat-permohonan-pengisian-bbm-solar-bersubsidi',
+        'name' => 'Test Letter', 'short_name' => 'Test'));
+    $catalogServiceId = (int) $db->insert_id();
     $requests = array();
     foreach (array('approved', 'submitted', 'approved', 'approved') as $i => $status) {
         $requests[] = $id = api_uuid();
         $db->insert('service_requests', array('id' => $id, 'request_code' => 'TEST-' . $i,
             'citizen_user_id' => 1, 'village_id' => $i === 2 ? $otherVillage : $village,
-            'service_type_id' => 1, 'status' => $status, 'payload_json' => '{}'));
+            'service_type_id' => 1, 'catalog_service_id' => $i === 0 ? $catalogServiceId : NULL,
+            'status' => $status, 'payload_json' => '{}'));
     }
     check($db->count_all('service_requests') === 4, 'fixtures stored in isolated database');
     $GLOBALS['test_ci'] = (object) array('db' => $db);
@@ -147,6 +152,26 @@ try {
     check($db->count_all('notifications') === 1 && $db->count_all('request_status_history') === 1, 'HTML upgrade does not duplicate notification or history');
     $upgradeAgain = $controller->official_html($requests[0]);
     check(!empty($upgradeAgain['success']) && !empty($upgradeAgain['duplicate']), 'same HTML retry is idempotent');
+    $pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    $htmlReplacement = str_replace('</main>', '<div class="surat-dua-ttd-block"><div class="surat-dua-ttd-qr"><img src="' . $pixel . '" alt="QR Surat"></div></div></main>', $html);
+    $controller->rawBody = $htmlReplacement;
+    $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_SHA256'] = hash('sha256', $htmlReplacement);
+    $db->where('id', $catalogServiceId)->update('village_service_catalog', array('service_key' => 'test-letter'));
+    check(empty($controller->official_html($requests[0])['success']), 'issued HTML repair is limited to the BBM service');
+    $db->where('id', $catalogServiceId)->update('village_service_catalog', array('service_key' => 'surat-permohonan-pengisian-bbm-solar-bersubsidi'));
+    $replacement = $controller->official_html($requests[0]);
+    check(!empty($replacement['success']) && empty($replacement['duplicate']) && $replacement['format'] === 'html', 'issued HTML snapshot can be repaired in place');
+    $replaced = $db->where('id', $requests[0])->get('service_requests')->row_array();
+    check($replaced['document_sha256'] === hash('sha256', $htmlReplacement)
+        && file_get_contents($replaced['document_path']) === $htmlReplacement
+        && !is_file($upgraded['document_path'])
+        && $db->count_all('notifications') === 1 && $db->count_all('request_status_history') === 1,
+        'HTML repair updates only the official snapshot');
+    $secondReplacement = str_replace('</main>', '<!-- changed again --></main>', $htmlReplacement);
+    $controller->rawBody = $secondReplacement;
+    $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_SHA256'] = hash('sha256', $secondReplacement);
+    check(empty($controller->official_html($requests[0])['success']), 'canonical BBM HTML cannot be replaced again');
+    check(file_get_contents($replaced['document_path']) === $htmlReplacement, 'rejected second repair preserves canonical BBM HTML');
     $controller->rawBody = '<html>not a PDF</html>';
     check($controller->official_document($requests[3])['error_code'] === 'invalid_document', 'non-PDF rejected');
     $controller->rawBody = $body;

@@ -740,17 +740,28 @@ class Sync_model extends CI_Model
             return array('success' => FALSE, 'message' => 'Struktur dokumen resmi belum siap.');
         }
         $request = $this->db
-            ->select('id, citizen_user_id, status, event_version, local_reference, document_path, document_sha256, document_format')
-            ->where(array('id' => (string) $requestId, 'village_id' => (string) $installation['village_id']))
+            ->select('r.id, r.citizen_user_id, r.status, r.event_version, r.local_reference, r.document_path, r.document_sha256, r.document_format, COALESCE(vc.service_key, st.slug) AS service_slug', FALSE)
+            ->from('service_requests r')
+            ->join('service_types st', 'st.id = r.service_type_id', 'left')
+            ->join('village_service_catalog vc', 'vc.id = r.catalog_service_id AND vc.village_id = r.village_id', 'left', FALSE)
+            ->where(array('r.id' => (string) $requestId, 'r.village_id' => (string) $installation['village_id']))
             ->limit(1)
-            ->get('service_requests')
+            ->get()
             ->row_array();
         if (!$request) return array('success' => FALSE, 'message' => 'Permohonan tidak ditemukan pada desa ini.');
 
+        $same_reference = !empty($request['document_sha256'])
+            && hash_equals((string) $request['local_reference'], trim((string) $reference));
         $upgrade = (string) $request['status'] === 'issued' && $format === 'html'
             && (string) $request['document_format'] === 'pdf'
-            && !empty($request['document_sha256'])
-            && hash_equals((string) $request['local_reference'], trim((string) $reference));
+            && $same_reference;
+        // One legacy BBM renderer produced a duplicate signature block. Permit
+        // only that known snapshot to be replaced by its canonical local view.
+        // Once repaired, later attempts are rejected like every issued letter.
+        $html_repair = (string) $request['status'] === 'issued' && $format === 'html'
+            && (string) $request['document_format'] === 'html'
+            && $same_reference && $this->is_legacy_bbm_html_repair($request, $path);
+        $upgrade = $upgrade || $html_repair;
         if ((string) $request['status'] === 'issued') {
             if ($request['document_format'] === $format && !empty($request['document_sha256']) && hash_equals((string) $request['document_sha256'], (string) $sha256)) {
                 return array('success' => TRUE, 'duplicate' => TRUE, 'event_version' => max(1, (int) $request['event_version']), 'message' => 'Dokumen resmi ini sudah diterbitkan.');
@@ -823,7 +834,36 @@ class Sync_model extends CI_Model
         return array('success' => TRUE, 'duplicate' => FALSE,
             'event_version' => $eventVersion,
             'replaced_path' => $upgrade ? (string) $request['document_path'] : '',
-            'message' => $upgrade ? 'Tampilan surat berhasil diperbarui menjadi HTML.' : 'Dokumen resmi berhasil diterbitkan.');
+            'message' => $html_repair ? 'Tampilan surat BBM lama berhasil diperbaiki.'
+                : ($upgrade ? 'Tampilan surat berhasil diperbarui menjadi HTML.' : 'Dokumen resmi berhasil diterbitkan.'));
+    }
+
+    private function is_legacy_bbm_html_repair(array $request, $replacementPath)
+    {
+        if ((string) (isset($request['service_slug']) ? $request['service_slug'] : '')
+                !== 'surat-permohonan-pengisian-bbm-solar-bersubsidi') {
+            return FALSE;
+        }
+        $currentPath = trim((string) (isset($request['document_path']) ? $request['document_path'] : ''));
+        $replacementPath = trim((string) $replacementPath);
+        if ($currentPath === '' || $replacementPath === '' || is_link($currentPath) || is_link($replacementPath)
+            || !is_file($currentPath) || !is_readable($currentPath)
+            || !is_file($replacementPath) || !is_readable($replacementPath)) {
+            return FALSE;
+        }
+        $current = @file_get_contents($currentPath);
+        $replacement = @file_get_contents($replacementPath);
+        if (!is_string($current) || !is_string($replacement)
+            || strpos($current, 'class="surat-dua-ttd-block"') !== FALSE
+            || substr_count($replacement, 'class="surat-dua-ttd-block"') !== 1
+            || substr_count($replacement, 'class="surat-dua-ttd-qr"') !== 1
+            || strpos($replacement, 'signature-authorization-title') !== FALSE) {
+            return FALSE;
+        }
+        return preg_match(
+            '/<div\b[^>]*class="[^"]*\bsurat-dua-ttd-qr\b[^"]*"[^>]*>\s*<img\b[^>]*src="data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+\/=]+"[^>]*>/is',
+            $replacement
+        ) === 1;
     }
 
     private function apply_service_catalog(array $installation, array $payload)

@@ -106,12 +106,14 @@ class Requests extends MY_Controller
             return $this->fail(isset($result['message']) ? $result['message'] : 'Dokumen resmi belum dapat diterbitkan.', 409, 'document_not_published');
         }
 
-        // Retire only the previous PDF of this request after its HTML is committed.
+        // Retire the previous snapshot only after its replacement is committed.
         $previous = isset($result['replaced_path']) ? (string) $result['replaced_path'] : '';
         $previousReal = $previous !== '' ? realpath($previous) : FALSE;
+        $targetReal = realpath($target);
         if ($format === 'html' && $previousReal !== FALSE && !is_link($previous)
             && dirname($previousReal) === $realDirectory
-            && strtolower(pathinfo($previousReal, PATHINFO_EXTENSION)) === 'pdf') {
+            && $targetReal !== FALSE && $previousReal !== $targetReal
+            && in_array(strtolower(pathinfo($previousReal, PATHINFO_EXTENSION)), array('pdf', 'html'), TRUE)) {
             if (!@unlink($previousReal)) log_message('error', 'Previous official document cleanup failed for request ' . $requestId);
         }
 
