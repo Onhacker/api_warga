@@ -7,9 +7,9 @@ class Health extends MY_Controller
     {
         $database = 'demo';
         if (getenv('API_DEMO_MODE') !== '1') {
-            if (!isset($this->db) || !$this->db->conn_id || !$this->db->query('SELECT 1')) return $this->respond(array('success' => FALSE, 'service' => 'SmartDesa Warga API', 'status' => 'degraded'), 503);
+            if (!isset($this->db) || !$this->db->conn_id || !$this->db->query('SELECT 1')) return $this->respond(array('success' => FALSE, 'service' => 'SI DAPULIK API', 'status' => 'degraded'), 503);
             $database = 'ready';
         }
-        return $this->respond(array('success' => TRUE, 'service' => 'SmartDesa Warga API', 'status' => 'ready', 'database' => $database, 'time' => date('c')));
+        return $this->respond(array('success' => TRUE, 'service' => 'SI DAPULIK API', 'status' => 'ready', 'database' => $database, 'time' => date('c')));
     }
 }

@@ -93,7 +93,7 @@ class Installations extends MY_Controller
         if (!empty($row['enrollment_expires_at']) && strtotime((string) $row['enrollment_expires_at']) < time()) {
             $this->db->trans_rollback();
             $this->record_failed_enrollment($rateScope);
-            return $this->fail('Kode aktivasi sudah kedaluwarsa. Minta kode baru kepada pengelola SmartDesa.', 410, 'enrollment_expired');
+            return $this->fail('Kode aktivasi sudah kedaluwarsa. Minta kode baru kepada pengelola SI DAPULIK.', 410, 'enrollment_expired');
         }
 
         $alreadyUsed = !empty($row['enrollment_used_at']);
@@ -131,7 +131,7 @@ class Installations extends MY_Controller
 
         return $this->respond(array(
             'success' => TRUE,
-            'message' => $alreadyUsed ? 'Aktivasi instalasi dipulihkan.' : 'SmartDesa berhasil dihubungkan ke layanan warga.',
+            'message' => $alreadyUsed ? 'Aktivasi instalasi dipulihkan.' : 'SI DAPULIK berhasil dihubungkan ke layanan warga.',
             'installation' => array(
                 'installation_code' => (string) $row['installation_code'],
                 'secret' => $secret,
@@ -287,7 +287,7 @@ class Installations extends MY_Controller
 
         return $this->respond(array(
             'success' => TRUE,
-            'message' => $alreadyUsed ? 'Koneksi SmartDesa dipulihkan.' : 'SmartDesa berhasil terhubung otomatis ke layanan warga.',
+            'message' => $alreadyUsed ? 'Koneksi SI DAPULIK dipulihkan.' : 'SI DAPULIK berhasil terhubung otomatis ke layanan warga.',
             'installation' => array(
                 'installation_code' => (string) $row['installation_code'],
                 'secret' => $secret,

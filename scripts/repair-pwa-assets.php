@@ -10,7 +10,7 @@ try {
     }
     $root = realpath($input);
     if ($root === '/' || !is_file($root . '/index.php') || !is_dir($root . '/application')) {
-        throw new RuntimeException('Folder bukan document root PWA SmartDesa.');
+        throw new RuntimeException('Folder bukan document root PWA SI DAPULIK.');
     }
     $assets = $root . '/assets';
     if (!is_dir($assets) || is_link($assets)) throw new RuntimeException('Folder assets tidak tersedia atau berupa symlink.');

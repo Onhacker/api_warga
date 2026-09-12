@@ -1470,7 +1470,7 @@ class Sync_model extends CI_Model
             return array('success' => FALSE, 'message' => 'Alasan wajib diisi untuk perbaikan atau penolakan.');
         }
         if ($note === '') {
-            $note = 'Status diperbarui melalui SmartDesa lokal.';
+            $note = 'Status diperbarui melalui SI DAPULIK lokal.';
         }
 
         $now = date('Y-m-d H:i:s');
