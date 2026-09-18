@@ -22,4 +22,13 @@ Setelah itu jalankan `migrations/020_reinstall_enrollment.sql`. Migrasi ini meny
 
 Untuk fitur **Rebind / Pindah Kampung** pada dashboard Super Admin, jalankan `migrations/021_installation_rebind_audit.sql`. Operasi ini merotasi kredensial instalasi sumber dan tujuan, menyimpan jejak audit tanpa secret asli, serta tidak menghapus atau memindahkan data penduduk, surat, akun, permohonan, maupun dokumen.
 
+Jalankan `migrations/022_global_service_catalog.sql` untuk memakai satu katalog layanan
+global yang dikelola SmartDesa pusat. Migrasi mengimpor data katalog lama sebagai dasar,
+tetapi mempertahankan `is_ready=0`; PWA tetap membaca katalog masing-masing kampung sampai
+Super Admin berhasil menerbitkan snapshot pusat pertama. Setelah aktif, pesan katalog dari
+client desa lama diakui lalu diabaikan, sedangkan sinkronisasi penduduk, petugas, permohonan,
+status, dan dokumen tetap berjalan. Kolom `minimum_app_version` mencegah layanan baru tampil
+pada instalasi yang belum mendukungnya, dan `village_service_overrides` disediakan hanya untuk
+pengecualian kampung tanpa menggandakan seluruh katalog.
+
 Migration `004` dan endpoint bootstrap lama hanya dipertahankan sebagai jalur pemulihan terkontrol. Alur utama memakai grant aktivasi sekali pakai: aplikasi lokal membaca kode kampung dari identitas instalasi, meminta grant singkat dari server aktivasi, lalu API menerbitkan kredensial khusus instalasi. Secret penandatangan grant hanya berada di server aktivasi dan API; jangan menyimpannya di repository, `.env.build`, installer, atau membagikannya kepada desa.

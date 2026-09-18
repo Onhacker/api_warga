@@ -257,12 +257,16 @@ class MY_Controller extends CI_Controller
      * last_seen_at dicatat saat autentikasi; last_sync_at hanya dicatat
      * setelah endpoint sinkronisasi berhasil memproses permintaan.
      */
-    protected function touch_installation($synced = FALSE)
+    protected function touch_installation($synced = FALSE, $appVersion = '')
     {
         if (getenv('API_DEMO_MODE') === '1' || empty($this->installation['id']) || !isset($this->db)) return;
         $now = date('Y-m-d H:i:s');
         $data = array('last_seen_at' => $now);
         if ($synced) $data['last_sync_at'] = $now;
+        $appVersion = trim((string) $appVersion);
+        if ($appVersion !== '' && preg_match('/^[0-9A-Za-z][0-9A-Za-z.+_-]{0,49}$/', $appVersion)) {
+            $data['app_version'] = $appVersion;
+        }
         $this->db->where('id', $this->installation['id'])->update('village_installations', $data);
     }
 

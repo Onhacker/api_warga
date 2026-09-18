@@ -84,7 +84,7 @@ berpindah ke grant.
 
 Untuk deployment rutin di Hostinger setelah instalasi awal, jalankan satu perintah berikut
 dari repository API. Skrip mempertahankan `.env`, upload, log, dan data runtime; membuat
-backup database; menjalankan migrasi `006` sampai `015`, `018`, dan `019`; lalu memeriksa health API.
+backup database; menjalankan seluruh migrasi aplikasi sampai `022`; lalu memeriksa health API.
 
 ```bash
 cd "$HOME/repositories/api_warga"
@@ -92,12 +92,11 @@ bash scripts/deploy-hostinger.sh
 ```
 
 1. Buat database `smartdesa_warga`, impor `database/schema.sql`, lalu `database/seed.sql` dari proyek PWA.
-2. Jika database lama, impor berkas `database/migrations/001_*.sql` sampai
-   `database/migrations/015_*.sql` sesuai urutan, lalu `018_global_nik_uniqueness.sql` dan
-   `019_monitoring_auth.sql`. Migrasi `009` menambahkan metadata PDF resmi, `010`
-   memperpanjang `sync_messages.aggregate_id`, `015` menambahkan fingerprint pesan, versi
-   direktori, serta staging snapshot atomik, sedangkan `019` menambahkan pencegah replay
-   untuk dashboard monitoring.
+2. Jika database lama, jalankan berkas pada `database/migrations` sesuai urutan sampai
+   `022_global_service_catalog.sql`. Migrasi `009` menambahkan metadata dokumen resmi,
+   `010` memperpanjang `sync_messages.aggregate_id`, `015` menambahkan fingerprint pesan,
+   versi direktori, serta staging snapshot atomik, `019` menambahkan pencegah replay untuk
+   dashboard monitoring, dan `022` mengaktifkan katalog layanan global.
 3. Upload isi folder ini ke document root `api-warga-smartdesa.mediaverse.co.id`.
 4. Salin `.env.example` menjadi `.env`, isi `APP_KEY`, database, dan `WARGA_ALLOWED_ORIGIN`.
 5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat ditulis PHP,
@@ -132,7 +131,7 @@ bash scripts/deploy-hostinger.sh
 11. `tools/issue_enrollment_codes.php` dan endpoint `/v1/installations/enroll` dipertahankan hanya sebagai jalur pemulihan instalasi lama. Jangan gunakan alur pembagian kode untuk pemasangan normal.
 12. Pantau cakupan dan aktivitas tanpa membuka secret dengan `php tools/report_installations.php --env="$API_ENV" --format=text` atau `--format=csv`. Status `last_seen_at` diperbarui setiap permintaan bertanda tangan dan `last_sync_at` setelah pull/push/ack berhasil.
 13. Uji `GET /v1/health`, koneksi otomatis satu desa pilot, pemutusan bootstrap lokal,
-    katalog layanan, verifikasi penduduk, pull/push, serta penerbitan dan unduh PDF sebelum
+    katalog layanan, verifikasi penduduk, pull/push, serta penerbitan dan unduh dokumen sebelum
     merilis installer ke seluruh desa.
 
 14. Untuk mengaktifkan dashboard monitoring, isi `WARGA_MONITOR_API_KEY` dan
@@ -141,6 +140,14 @@ bash scripts/deploy-hostinger.sh
     key, dan secret yang sama, aktifkan layanan, lalu buka **SuAdmin Area > Monitoring
     Layanan Warga**. Filter kabupaten hanya dibuat dari Event & User Desa yang berstatus
     aktif. Modul monitoring pusat sengaja dikecualikan dari installer desa.
+
+15. Setelah API, PWA, dan migrasi `022` terpasang, buka **SuAdmin Area > Master Surat**
+    pada SmartDesa pusat. Periksa jumlah layanan dan versi minimum, lalu klik **Terbitkan
+    Katalog** satu kali. Publikasi pertama mengganti katalog per desa dengan satu snapshot
+    global secara atomik. Migrasi sengaja mempertahankan katalog lama sampai publikasi ini
+    berhasil, sehingga rollout tidak membuat layanan warga mendadak kosong. Perubahan Master
+    Surat berikutnya akan menerbitkan ulang snapshot global; laptop desa tidak lagi mengirim
+    daftar suratnya sendiri.
 
 Tes regresi penerbitan dapat dijalankan pada mesin pengembangan yang memiliki MariaDB:
 
@@ -159,6 +166,10 @@ direktori penduduk, pembuatan permohonan melalui model PWA, dan alur status. Sou
 dibaca dari folder sejajar `smartdesa-warga`; atur `SMARTDESA_TEST_PWA_PATH` jika berbeda.
 Gunakan variabel koneksi database tes yang sama seperti perintah di atas. Autentikasi HTTP
 dan unggah berkas nyata tetap harus diuji pada lingkungan pilot.
+
+`tools/tests/global_catalog.php` menguji perpindahan aman dari katalog lama, publikasi
+global atomik, pembatasan versi aplikasi, override kampung, idempotensi, dan penolakan
+publikasi katalog dari client desa lama. Tes ini juga memakai database sementara.
 
 ### Model multi-desa
 

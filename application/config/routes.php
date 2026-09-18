@@ -10,6 +10,7 @@ $route['v1/installations/auto-enroll'] = 'v1/installations/auto_enroll';
 $route['v1/monitoring/summary'] = 'v1/monitoring/summary';
 $route['v1/monitoring/villages'] = 'v1/monitoring/villages';
 $route['v1/monitoring/rebind'] = 'v1/monitoring/rebind';
+$route['v1/monitoring/catalog'] = 'v1/monitoring/catalog';
 $route['v1/sync/pull'] = 'v1/sync/pull';
 $route['v1/sync/push'] = 'v1/sync/push';
 $route['v1/sync/ack'] = 'v1/sync/ack';

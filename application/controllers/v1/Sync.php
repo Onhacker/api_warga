@@ -15,7 +15,7 @@ class Sync extends MY_Controller
         $messages = $this->Sync_model->pull($installation, $limit);
         $residentDirectory = $this->Sync_model->resident_directory_state($installation);
         $staffAccounts = $this->Sync_model->staff_accounts_state($installation);
-        $this->touch_installation(TRUE);
+        $this->touch_installation(TRUE, isset($payload['app_version']) ? $payload['app_version'] : '');
         return $this->respond(array(
             'success' => TRUE,
             'installation' => $installation['installation_code'],
@@ -39,7 +39,7 @@ class Sync extends MY_Controller
         if (!isset($payload['messages']) || !is_array($payload['messages']) || count($payload['messages']) > 100) return $this->fail('Daftar tanda terima tidak valid.', 422, 'invalid_ack');
         $this->load->model('Sync_model');
         $processed = $this->Sync_model->acknowledge($installation, $payload['messages']);
-        $this->touch_installation(TRUE);
+        $this->touch_installation(TRUE, isset($payload['app_version']) ? $payload['app_version'] : '');
         return $this->respond(array('success' => TRUE, 'processed' => $processed, 'server_time' => date('c')));
     }
 
@@ -56,7 +56,7 @@ class Sync extends MY_Controller
         if (!is_array($result)) {
             $result = array('accepted' => (int) $result, 'rejected' => 0, 'results' => array());
         }
-        $this->touch_installation(TRUE);
+        $this->touch_installation(TRUE, isset($payload['app_version']) ? $payload['app_version'] : '');
 
         return $this->respond(array(
             'success' => TRUE,

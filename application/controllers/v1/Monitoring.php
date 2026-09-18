@@ -129,6 +129,39 @@ class Monitoring extends MY_Controller
         ));
     }
 
+    /**
+     * Katalog surat ditulis sekali oleh server pusat. Endpoint ini sengaja
+     * memakai kredensial monitoring, bukan kredensial instalasi desa.
+     */
+    public function catalog()
+    {
+        if (!$this->require_method('POST')) return;
+        if (!$this->authenticate_monitoring()) return;
+        if (!isset($this->db) || empty($this->db->conn_id)) {
+            return $this->fail('Database API belum tersedia.', 503, 'service_unavailable');
+        }
+
+        $payload = $this->read_json();
+        if ($payload === FALSE) return;
+        $operation = strtolower(trim((string) (isset($payload['operation']) ? $payload['operation'] : 'status')));
+        if (!in_array($operation, array('status', 'publish'), TRUE)) {
+            return $this->fail('Operasi katalog global tidak valid.', 422, 'invalid_catalog_operation');
+        }
+
+        $this->load->model('Global_catalog_model');
+        $result = $operation === 'publish'
+            ? $this->Global_catalog_model->publish($payload)
+            : $this->Global_catalog_model->status();
+        if (empty($result['success'])) {
+            $error = isset($result['error']) ? (string) $result['error'] : 'catalog_failed';
+            $status = in_array($error, array('service_unavailable', 'migration_required', 'storage_error'), TRUE) ? 503 : 422;
+            return $this->fail(isset($result['message']) ? $result['message'] : 'Katalog global belum dapat diproses.', $status, $error);
+        }
+
+        $result['server_time'] = date('c');
+        return $this->respond($result);
+    }
+
     private function validate_payload(array $payload)
     {
         if (!isset($payload['regencies']) || !is_array($payload['regencies'])

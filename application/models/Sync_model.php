@@ -6,6 +6,7 @@ class Sync_model extends CI_Model
     private $catalog_schema_ready = false;
     private $resident_schema_ready = false;
     private $official_document_schema_ready = false;
+    private $global_catalog_active = NULL;
 
     public function document_for_installation(array $installation, $documentId)
     {
@@ -298,6 +299,14 @@ class Sync_model extends CI_Model
                 $storedPayload = array('source_revision' => $payload['source_revision'] ?? '',
                     'snapshot_hash' => $payload['snapshot_hash'] ?? '',
                     'staff_count' => isset($payload['staff']) && is_array($payload['staff']) ? count($payload['staff']) : 0);
+            }
+            if ($aggregateType === 'service_catalog' && $this->global_catalog_active()) {
+                $storedPayload = array(
+                    'catalog_version' => isset($payload['catalog_version']) ? (int) $payload['catalog_version'] : 0,
+                    'catalog_hash' => isset($payload['catalog_hash']) ? (string) $payload['catalog_hash'] : '',
+                    'service_count' => isset($payload['services']) && is_array($payload['services']) ? count($payload['services']) : 0,
+                    'ignored_by_global_catalog' => TRUE
+                );
             }
             $previousDebug = $this->db->db_debug;
             $this->db->db_debug = FALSE;
@@ -868,6 +877,14 @@ class Sync_model extends CI_Model
 
     private function apply_service_catalog(array $installation, array $payload)
     {
+        if ($this->global_catalog_active()) {
+            return array(
+                'success' => TRUE,
+                'message' => 'Katalog desa diabaikan karena katalog global sudah aktif.',
+                'centrally_managed' => TRUE,
+                'service_count' => 0
+            );
+        }
         $villageId = trim((string) (isset($installation['village_id']) ? $installation['village_id'] : ''));
         $services = isset($payload['services']) && is_array($payload['services']) ? $payload['services'] : NULL;
         $catalogVersion = filter_var($payload['catalog_version'] ?? NULL, FILTER_VALIDATE_INT, array('options' => array('min_range' => 1)));
@@ -1797,6 +1814,16 @@ class Sync_model extends CI_Model
         if ($value === '') return NULL;
         $time = strtotime($value);
         return $time ? date('Y-m-d H:i:s', $time) : NULL;
+    }
+
+    private function global_catalog_active()
+    {
+        if ($this->global_catalog_active !== NULL) return $this->global_catalog_active;
+        $this->global_catalog_active = FALSE;
+        if (!$this->db->table_exists('global_service_catalog_state')) return FALSE;
+        $state = $this->db->select('is_ready')->where('id', 1)->limit(1)->get('global_service_catalog_state')->row_array();
+        $this->global_catalog_active = $state && (int) $state['is_ready'] === 1;
+        return $this->global_catalog_active;
     }
 
     private function ensure_field($table, $field, $sql)

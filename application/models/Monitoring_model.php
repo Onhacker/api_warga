@@ -37,7 +37,7 @@ class Monitoring_model extends CI_Model
 
         $installations = $this->installation_metrics($villageIds);
         $residents = $this->count_map('village_resident_directory', 'village_id', $villageIds, array('status' => 'active'));
-        $catalog = $this->catalog_metrics($villageIds);
+        $catalog = $this->catalog_metrics($villageIds, $installations);
         $staff = $this->count_map('warga_staff_sources', 'village_id', $villageIds, array(), 'user_id');
         $citizenAccounts = $this->count_map('citizen_profiles', 'village_id', $villageIds, array(), 'user_id');
         $requests = $this->request_metrics($villageIds);
@@ -244,10 +244,46 @@ class Monitoring_model extends CI_Model
         return 'stale';
     }
 
-    private function catalog_metrics(array $villageIds)
+    private function catalog_metrics(array $villageIds, array $installations = array())
     {
         $result = array();
-        if (empty($villageIds) || !$this->table_ready('village_service_catalog')) return $result;
+        if (empty($villageIds)) return $result;
+
+        if ($this->table_ready('global_service_catalog_state')
+            && $this->table_ready('service_types')
+            && $this->table_ready('village_service_overrides')) {
+            $state = $this->db->select('is_ready')->where('id', 1)->limit(1)->get('global_service_catalog_state')->row_array();
+            if ($state && (int) $state['is_ready'] === 1) {
+                $services = $this->db->select('id, minimum_app_version')
+                    ->where('is_active', 1)->get('service_types')->result_array();
+                $overrides = array();
+                $query = $this->db->select('village_id, service_type_id, is_visible, submission_enabled')
+                    ->from('village_service_overrides')->where_in('village_id', $villageIds)->get();
+                if ($query) {
+                    foreach ($query->result_array() as $row) {
+                        $overrides[(string) $row['village_id']][(int) $row['service_type_id']] = $row;
+                    }
+                }
+                foreach ($villageIds as $villageId) {
+                    $version = isset($installations[$villageId]['app_version'])
+                        ? (string) $installations[$villageId]['app_version'] : '';
+                    $total = 0;
+                    foreach ($services as $service) {
+                        if (!$this->version_supported($version, isset($service['minimum_app_version']) ? $service['minimum_app_version'] : '0.0.0')) continue;
+                        $override = isset($overrides[$villageId][(int) $service['id']]) ? $overrides[$villageId][(int) $service['id']] : NULL;
+                        if ($override && (int) $override['is_visible'] !== 1) continue;
+                        // Monitoring menunjukkan jumlah layanan yang tampil.
+                        // Layanan informatif tetap bagian katalog walaupun
+                        // tombol pengajuannya belum diaktifkan.
+                        $total++;
+                    }
+                    $result[$villageId] = $total;
+                }
+                return $result;
+            }
+        }
+
+        if (!$this->table_ready('village_service_catalog')) return $result;
         $fields = $this->table_fields('village_service_catalog');
         if (!in_array('village_id', $fields, TRUE)) return $result;
 
@@ -258,6 +294,14 @@ class Monitoring_model extends CI_Model
         if (!$query) return $result;
         foreach ($query->result_array() as $row) $result[(string) $row['village_id']] = (int) $row['total'];
         return $result;
+    }
+
+    private function version_supported($current, $minimum)
+    {
+        $minimum = ltrim(trim((string) $minimum), 'vV');
+        if ($minimum === '' || $minimum === '0' || $minimum === '0.0' || $minimum === '0.0.0') return TRUE;
+        $current = ltrim(trim((string) $current), 'vV');
+        return $current !== '' && version_compare($current, $minimum, '>=');
     }
 
     private function request_metrics(array $villageIds)

@@ -162,14 +162,49 @@ CREATE TABLE IF NOT EXISTS service_types (
   name VARCHAR(180) NOT NULL,
   short_name VARCHAR(100) NOT NULL,
   icon VARCHAR(80) NOT NULL DEFAULT 'fa-file-alt',
-  description VARCHAR(500) NULL,
+  description VARCHAR(1000) NULL,
   requirements_json JSON NULL,
+  form_schema_json LONGTEXT NULL,
   template_key VARCHAR(100) NULL,
+  schema_version INT UNSIGNED NOT NULL DEFAULT 1,
   sort_order INT NOT NULL DEFAULT 0,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
+  submission_enabled TINYINT(1) NOT NULL DEFAULT 1,
+  availability_note VARCHAR(500) NULL,
+  minimum_app_version VARCHAR(50) NOT NULL DEFAULT '0.0.0',
+  source_updated_at DATETIME NULL,
+  published_at DATETIME NULL,
+  source_hash CHAR(64) NULL,
+  source_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_service_types_active (is_active, sort_order, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS global_service_catalog_state (
+  id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  is_ready TINYINT(1) NOT NULL DEFAULT 0,
+  last_revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  last_hash CHAR(64) NULL,
+  service_count INT UNSIGNED NOT NULL DEFAULT 0,
+  published_by VARCHAR(160) NULL,
+  published_at DATETIME NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS village_service_overrides (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  village_id CHAR(36) NOT NULL,
+  service_type_id INT UNSIGNED NOT NULL,
+  is_visible TINYINT(1) NOT NULL DEFAULT 1,
+  submission_enabled TINYINT(1) NULL,
+  availability_note VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_village_service_override (village_id, service_type_id),
+  KEY idx_village_service_override_visible (village_id, is_visible),
+  CONSTRAINT fk_service_override_village FOREIGN KEY (village_id) REFERENCES village_tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_service_override_type FOREIGN KEY (service_type_id) REFERENCES service_types(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Per-village publication of the local SmartDesa Master Surat catalogue.
