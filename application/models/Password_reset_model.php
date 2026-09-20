@@ -42,10 +42,12 @@ class Password_reset_model extends CI_Model
         return preg_match('/^\+?[0-9]{8,15}$/', $phone) ? $phone : '';
     }
 
-    public function request_code($email, $ip, $user_agent = '')
+    public function request_code($email, $ip, $user_agent = '', $tenantCode = 'default')
     {
         $email = $this->normalize_email($email);
         if ($email === '') return array('success' => FALSE, 'message' => 'Alamat email belum valid.');
+        $tenantCode = $this->normalize_tenant_code($tenantCode);
+        if ($tenantCode === FALSE) return array('success' => FALSE, 'message' => 'Identitas kabupaten PWA tidak valid.', 'status' => 422);
         if (!$this->schema_ready()) return array('success' => FALSE, 'message' => 'Layanan reset password belum selesai diperbarui.', 'status' => 503);
 
         $email_hash = $this->value_hash('email|' . $email);
@@ -71,9 +73,9 @@ class Password_reset_model extends CI_Model
             );
         }
 
-        $users = $this->db->select('id, name, email, password_hash')
-            ->where(array('email' => $email, 'is_active' => 1))
-            ->limit(2)->get('users')->result_array();
+        $users = $this->tenant_user_query($tenantCode, 'u.id, u.name, u.email, u.password_hash')
+            ->where(array('u.email' => $email, 'u.is_active' => 1))
+            ->limit(2)->get()->result_array();
         $user = count($users) === 1 ? $users[0] : NULL;
 
         try {
@@ -130,7 +132,7 @@ class Password_reset_model extends CI_Model
      * password, but never stores it. The OTP is delivered to an email address
      * owned by the account (or the new email when changing it).
      */
-    public function request_account_change($userId, $currentPassword, $purpose, $targetEmail, $targetPhone, $ip)
+    public function request_account_change($userId, $currentPassword, $purpose, $targetEmail, $targetPhone, $ip, $tenantCode = 'default')
     {
         $userId = (int) $userId;
         $purpose = strtolower(trim((string) $purpose));
@@ -138,12 +140,15 @@ class Password_reset_model extends CI_Model
         $rawPhone = trim((string) $targetPhone);
         $targetEmail = $this->normalize_email($targetEmail);
         $targetPhone = $this->normalize_phone($targetPhone);
+        $tenantCode = $this->normalize_tenant_code($tenantCode);
+        if ($tenantCode === FALSE) return array('success' => FALSE, 'message' => 'Identitas kabupaten PWA tidak valid.', 'status' => 422);
         if ($userId < 1 || !in_array($purpose, array('contact', 'password'), TRUE)) {
             return array('success' => FALSE, 'message' => 'Permintaan keamanan akun tidak valid.', 'status' => 422);
         }
         if (!$this->schema_ready()) return array('success' => FALSE, 'message' => 'Layanan keamanan akun belum selesai diperbarui.', 'status' => 503);
         if ($purpose === 'contact' && (($rawEmail !== '' && $targetEmail === '') || ($rawPhone !== '' && $targetPhone === ''))) return array('success' => FALSE, 'message' => 'Email atau nomor telepon belum valid.', 'status' => 422);
-        $user = $this->db->select('id,name,email,phone,password_hash')->where(array('id' => $userId, 'is_active' => 1))->limit(1)->get('users')->row_array();
+        $user = $this->tenant_user_query($tenantCode, 'u.id,u.name,u.email,u.phone,u.password_hash')
+            ->where(array('u.id' => $userId, 'u.is_active' => 1))->limit(1)->get()->row_array();
         if (!$user || !password_verify((string) $currentPassword, (string) $user['password_hash'])) {
             return array('success' => FALSE, 'message' => 'Kata sandi saat ini tidak sesuai.', 'status' => 422);
         }
@@ -205,7 +210,7 @@ class Password_reset_model extends CI_Model
         return array('success' => TRUE, 'request_token' => $requestToken, 'email_masked' => $this->mask_email($destination), 'expires_in' => 600, 'resend_after' => 60, 'message' => 'Kode verifikasi telah dikirim ke email akun. Periksa Inbox, Spam, atau Promosi.');
     }
 
-    public function complete_account_change($userId, $purpose, $requestToken, $otp, $targetEmail, $targetPhone, $newPassword = '')
+    public function complete_account_change($userId, $purpose, $requestToken, $otp, $targetEmail, $targetPhone, $newPassword = '', $tenantCode = 'default')
     {
         $userId = (int) $userId;
         $purpose = strtolower(trim((string) $purpose));
@@ -213,6 +218,8 @@ class Password_reset_model extends CI_Model
         $otp = preg_replace('/\D+/', '', (string) $otp);
         $targetEmail = $this->normalize_email($targetEmail);
         $targetPhone = $this->normalize_phone($targetPhone);
+        $tenantCode = $this->normalize_tenant_code($tenantCode);
+        if ($tenantCode === FALSE) return array('success' => FALSE, 'message' => 'Identitas kabupaten PWA tidak valid.', 'status' => 422);
         if ($userId < 1 || !in_array($purpose, array('contact', 'password'), TRUE) || !preg_match('/^[a-f0-9]{64}$/', $requestToken) || !preg_match('/^[0-9]{6}$/', $otp)) return array('success' => FALSE, 'message' => 'Kode verifikasi tidak valid.', 'status' => 422);
         if ($purpose === 'password' && (strlen((string) $newPassword) < 8 || strlen((string) $newPassword) > 72 || strpos((string) $newPassword, "\0") !== FALSE)) return array('success' => FALSE, 'message' => 'Kata sandi baru harus 8–72 karakter.', 'status' => 422);
         if (!$this->schema_ready() || !$this->db->trans_begin()) return array('success' => FALSE, 'message' => 'Layanan keamanan akun belum siap.', 'status' => 503);
@@ -234,7 +241,8 @@ class Password_reset_model extends CI_Model
             $this->db->trans_rollback();
             return array('success' => FALSE, 'message' => 'Data perubahan akun sudah berubah. Minta kode baru.', 'status' => 409);
         }
-        $user = $this->db->select('id,email,phone,password_hash')->where(array('id' => $userId, 'is_active' => 1))->limit(1)->get('users')->row_array();
+        $user = $this->tenant_user_query($tenantCode, 'u.id,u.email,u.phone,u.password_hash')
+            ->where(array('u.id' => $userId, 'u.is_active' => 1))->limit(1)->get()->row_array();
         if (!$user) { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Akun tidak tersedia.', 'status' => 410); }
         if ($purpose === 'contact') {
             if ($targetEmail === '') { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Email aktif wajib diisi agar keamanan dan pemulihan akun tetap tersedia.', 'status' => 422); }
@@ -260,11 +268,13 @@ class Password_reset_model extends CI_Model
         return array('success' => TRUE, 'message' => $message, 'email' => $targetEmail, 'phone' => $targetPhone);
     }
 
-    public function complete($request_token, $otp, $new_password)
+    public function complete($request_token, $otp, $new_password, $tenantCode = 'default')
     {
         $request_token = strtolower(trim((string) $request_token));
         $otp = preg_replace('/\D+/', '', (string) $otp);
         $new_password = (string) $new_password;
+        $tenantCode = $this->normalize_tenant_code($tenantCode);
+        if ($tenantCode === FALSE) return array('success' => FALSE, 'message' => 'Identitas kabupaten PWA tidak valid.', 'status' => 422);
         if (!preg_match('/^[a-f0-9]{64}$/', $request_token) || !preg_match('/^[0-9]{6}$/', $otp)) {
             return array('success' => FALSE, 'message' => 'Kode verifikasi tidak valid.', 'status' => 422);
         }
@@ -306,7 +316,8 @@ class Password_reset_model extends CI_Model
         }
 
         $user = !empty($row['user_id'])
-            ? $this->db->select('id, email, password_hash')->where(array('id' => (int) $row['user_id'], 'is_active' => 1))->limit(1)->get('users')->row_array()
+            ? $this->tenant_user_query($tenantCode, 'u.id, u.email, u.password_hash')
+                ->where(array('u.id' => (int) $row['user_id'], 'u.is_active' => 1))->limit(1)->get()->row_array()
             : NULL;
         $current_email = $user ? $this->normalize_email(isset($user['email']) ? $user['email'] : '') : '';
         if (!$user || $current_email === '' || !hash_equals((string) $row['email_hash'], $this->value_hash('email|' . $current_email))) {
@@ -347,6 +358,29 @@ class Password_reset_model extends CI_Model
             return array('success' => FALSE, 'message' => 'Kata sandi baru belum dapat diselesaikan.', 'status' => 503);
         }
         return array('success' => TRUE, 'message' => 'Kata sandi berhasil diperbarui. Silakan masuk kembali.');
+    }
+
+    /**
+     * Tenant publik memakai kode kabupaten (contoh 95.01). Nilai default
+     * mempertahankan perilaku deployment lama yang belum dipisah per domain.
+     */
+    public function normalize_tenant_code($value)
+    {
+        $value = strtoupper(trim((string) $value));
+        if ($value === '' || strtolower($value) === 'default') return 'default';
+        if (preg_match('/^[0-9]{4}$/', $value)) $value = substr($value, 0, 2) . '.' . substr($value, 2, 2);
+        if (preg_match('/^([0-9]{2}\.[0-9]{2})(?:\.|$)/', $value, $match)) $value = $match[1];
+        return preg_match('/^[A-Z0-9][A-Z0-9._-]{1,29}$/', $value) ? $value : FALSE;
+    }
+
+    private function tenant_user_query($tenantCode, $fields)
+    {
+        $query = $this->db->select($fields)->from('users u');
+        if ($tenantCode !== 'default') {
+            $query->join('village_tenants v', 'v.id = u.village_id', 'inner')
+                ->where('v.regency_code', $tenantCode);
+        }
+        return $query;
     }
 
     private function send_central_email($email, $name, $otp, $purpose = 'password_reset')

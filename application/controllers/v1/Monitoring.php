@@ -173,7 +173,9 @@ class Monitoring extends MY_Controller
         $operation = strtolower(trim((string) (isset($payload['operation']) ? $payload['operation'] : 'status')));
         if (!in_array($operation, array('status', 'publish'), TRUE)) return $this->fail('Operasi branding tidak valid.', 422, 'invalid_branding_operation');
         $this->load->model('Public_branding_model');
-        $result = $operation === 'publish' ? $this->Public_branding_model->publish($payload) : $this->Public_branding_model->status();
+        $result = $operation === 'publish'
+            ? $this->Public_branding_model->publish($payload)
+            : $this->Public_branding_model->status(isset($payload['tenant_code']) ? $payload['tenant_code'] : 'default');
         if (empty($result['success'])) {
             $error = isset($result['error']) ? (string) $result['error'] : 'branding_failed';
             $status = in_array($error, array('migration_required', 'storage_error'), TRUE) ? 503 : 422;

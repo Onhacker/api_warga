@@ -91,6 +91,11 @@ try {
     check($apiMigration === $pwaMigration, 'API and PWA use the exact same account security migration');
     sql_batch($admin, $apiMigration);
     sql_batch($admin, $apiMigration);
+    $apiTenantMigration = file_get_contents($root . '/database/migrations/026_multi_tenant_branding.sql');
+    $pwaTenantMigration = file_get_contents($pwa . '/database/migrations/026_multi_tenant_branding.sql');
+    check($apiTenantMigration === $pwaTenantMigration, 'API and PWA use the exact same multi-tenant branding migration');
+    sql_batch($admin, $apiTenantMigration);
+    sql_batch($admin, $apiTenantMigration);
 
     $db = DB(array(
         'hostname' => $socket ?: $host, 'username' => $user, 'password' => $password,
@@ -105,8 +110,21 @@ try {
 
     $db->insert('roles', array('name' => 'Warga', 'slug' => 'warga'));
     $roleId = (int) $db->insert_id();
+    $jayawijayaVillageId = '11111111-1111-4111-8111-111111111111';
+    $otherVillageId = '22222222-2222-4222-8222-222222222222';
+    $db->insert('village_tenants', array(
+        'id' => $jayawijayaVillageId, 'province_code' => '95', 'province_name' => 'Papua Pegunungan',
+        'regency_code' => '95.01', 'regency_name' => 'Jayawijaya', 'district_code' => '95.01.01',
+        'district_name' => 'Wamena', 'village_code' => '95.01.01.2001', 'name' => 'Kampung Uji', 'status' => 'active'
+    ));
+    $db->insert('village_tenants', array(
+        'id' => $otherVillageId, 'province_code' => '91', 'province_name' => 'Papua',
+        'regency_code' => '91.01', 'regency_name' => 'Kabupaten Lain', 'district_code' => '91.01.01',
+        'district_name' => 'Distrik Lain', 'village_code' => '91.01.01.2001', 'name' => 'Kampung Lain', 'status' => 'active'
+    ));
     $db->insert('users', array(
         'role_id' => $roleId,
+        'village_id' => $jayawijayaVillageId,
         'name' => 'Pengguna Uji',
         'username' => 'warga_account_test',
         'email' => 'lama@example.test',
@@ -124,7 +142,9 @@ try {
     $newEmail = 'baru@example.test';
     $newPhone = '081299998888';
     check($db->insert('warga_password_reset_requests', pending_change_row($userId, 'contact', $contactToken, $contactOtp, $newEmail, $newPhone, 1)), 'contact OTP fixture stored');
-    $contact = $security->complete_account_change($userId, 'contact', $contactToken, $contactOtp, $newEmail, $newPhone);
+    $wrongTenant = $security->complete_account_change($userId, 'contact', $contactToken, $contactOtp, $newEmail, $newPhone, '', '91.01');
+    check(empty($wrongTenant['success']), 'account OTP is rejected by a different regency tenant');
+    $contact = $security->complete_account_change($userId, 'contact', $contactToken, $contactOtp, $newEmail, $newPhone, '', '95.01');
     check(!empty($contact['success']), 'valid OTP completes contact change');
     $saved = $db->where('id', $userId)->get('users')->row_array();
     check($saved['email'] === $newEmail && $saved['phone'] === $newPhone, 'new email and phone are persisted on the account');
@@ -134,7 +154,7 @@ try {
     $passwordToken = bin2hex(random_bytes(32));
     $passwordOtp = '271828';
     check($db->insert('warga_password_reset_requests', pending_change_row($userId, 'password', $passwordToken, $passwordOtp, $newEmail, $newPhone, 2)), 'password OTP fixture stored');
-    $changed = $security->complete_account_change($userId, 'password', $passwordToken, $passwordOtp, $newEmail, $newPhone, 'PasswordBaru!456');
+    $changed = $security->complete_account_change($userId, 'password', $passwordToken, $passwordOtp, $newEmail, $newPhone, 'PasswordBaru!456', '95.01');
     check(!empty($changed['success']), 'valid OTP completes password change');
     $saved = $db->where('id', $userId)->get('users')->row_array();
     check(password_verify('PasswordBaru!456', $saved['password_hash']), 'new password hash verifies');
@@ -146,19 +166,32 @@ try {
         $row['status'] = 'used';
         check($db->insert('warga_password_reset_requests', $row), 'rate-limit history fixture ' . $i . ' stored');
     }
-    $limited = $security->request_account_change($userId, 'PasswordBaru!456', 'contact', 'dibatasi@example.test', $newPhone, '203.0.113.99');
+    $limited = $security->request_account_change($userId, 'PasswordBaru!456', 'contact', 'dibatasi@example.test', $newPhone, '203.0.113.99', '95.01');
     check(empty($limited['success']) && (int) ($limited['status'] ?? 0) === 429, 'distributed attempts remain bounded per account');
 
     $branding = new Public_branding_model();
     $published = $branding->publish(array(
+        'tenant_code' => '95.01',
+        'tenant_name' => 'Jayawijaya',
         'nama_sistem' => '<b>SIDAPULIK Papua</b>',
         'kepanjangan' => 'Sistem Informasi Pelayanan Publik',
         'tagline' => 'Melayani warga dengan cepat'
     ));
     check(!empty($published['success']), 'central branding publication succeeds');
-    $status = $branding->status();
+    $status = $branding->status('95.01');
     check(($status['branding']['nama_sistem'] ?? '') === 'SIDAPULIK Papua', 'published branding is sanitized and readable');
     check(($status['branding']['tagline'] ?? '') === 'Melayani warga dengan cepat', 'published tagline is readable by the PWA');
+    check(($status['branding']['tenant_code'] ?? '') === '95.01', 'branding is stored under the requested regency tenant');
+    $otherPublished = $branding->publish(array(
+        'tenant_code' => '91.01',
+        'tenant_name' => 'Kabupaten Lain',
+        'nama_sistem' => 'LAYANAN LAIN',
+        'kepanjangan' => 'Layanan Kabupaten Lain',
+        'tagline' => 'Tagline tenant lain'
+    ));
+    check(!empty($otherPublished['success']), 'second regency branding publication succeeds');
+    check(($branding->status('91.01')['branding']['nama_sistem'] ?? '') === 'LAYANAN LAIN', 'second regency reads its own branding');
+    check(($branding->status('95.01')['branding']['nama_sistem'] ?? '') === 'SIDAPULIK Papua', 'second regency does not overwrite the first branding');
 } catch (Throwable $e) {
     fwrite(STDERR, 'FAIL: ' . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n");
     $exitCode = 1;

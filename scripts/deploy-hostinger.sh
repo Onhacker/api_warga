@@ -9,6 +9,7 @@ PWA_ROOT="${PWA_ROOT:-$HOME/domains/warga-smartdesa.mediaverse.co.id/public_html
 PRIVATE_ROOT="${PRIVATE_ROOT:-$HOME/smartdesa-private}"
 API_HEALTH_URL="${API_HEALTH_URL:-https://api-warga-smartdesa.mediaverse.co.id/v1/health}"
 PWA_PUBLIC_URL="${PWA_PUBLIC_URL:-https://warga-smartdesa.mediaverse.co.id}"
+PWA_TENANT_CODE="${PWA_TENANT_CODE:-}"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 require_command() {
@@ -106,7 +107,7 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
     --single-transaction --skip-lock-tables "$database_name" >"$backup_file"
 chmod 600 "$backup_file"
 
-printf 'Menjalankan migrasi database 006 sampai 025...\n'
+printf 'Menjalankan migrasi database 006 sampai 026...\n'
 for migration in \
     006_service_catalog \
     007_resident_directory \
@@ -156,6 +157,13 @@ if [[ ! -f "$migration_file" ]]; then
 fi
 mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
 
+migration_file="$API_REPO/database/migrations/026_multi_tenant_branding.sql"
+if [[ ! -f "$migration_file" ]]; then
+    printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
+    exit 1
+fi
+mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+
 deploy_api() {
     rsync -a --delete \
         --exclude='.git/' \
@@ -182,9 +190,47 @@ deploy_pwa() {
         "$PWA_REPO/" "$PWA_ROOT/"
 }
 
+configure_pwa_tenant() {
+    local tenant_code="${PWA_TENANT_CODE:-}"
+    if [[ -z "$tenant_code" ]]; then
+        return
+    fi
+    tenant_code="$(printf '%s' "$tenant_code" | tr '[:lower:]' '[:upper:]')"
+    if [[ ! "$tenant_code" =~ ^[A-Z0-9][A-Z0-9._-]{1,29}$ ]]; then
+        printf 'ERROR: PWA_TENANT_CODE tidak valid: %s\n' "$tenant_code" >&2
+        exit 1
+    fi
+    PWA_ENV_PATH="$PWA_ROOT/.env" PWA_TENANT_VALUE="$tenant_code" php <<'PHP'
+<?php
+$path = (string) getenv('PWA_ENV_PATH');
+$tenant = (string) getenv('PWA_TENANT_VALUE');
+if ($path === '' || $tenant === '') {
+    fwrite(STDERR, "ERROR: lokasi .env atau tenant PWA belum tersedia.\n");
+    exit(1);
+}
+$lines = is_file($path) ? file($path, FILE_IGNORE_NEW_LINES) : array();
+$found = false;
+foreach ($lines as &$line) {
+    if (preg_match('/^\s*WARGA_TENANT_CODE\s*=/', $line)) {
+        $line = 'WARGA_TENANT_CODE=' . $tenant;
+        $found = true;
+    }
+}
+unset($line);
+if (!$found) $lines[] = 'WARGA_TENANT_CODE=' . $tenant;
+$contents = implode("\n", $lines) . "\n";
+if (file_put_contents($path, $contents, LOCK_EX) === false || !chmod($path, 0600)) {
+    fwrite(STDERR, "ERROR: WARGA_TENANT_CODE belum dapat disimpan pada .env PWA.\n");
+    exit(1);
+}
+PHP
+    printf 'Tenant PWA dikunci ke %s pada %s\n' "$tenant_code" "$PWA_ROOT/.env"
+}
+
 printf 'Menyalin API dan PWA ke document root...\n'
 deploy_api
 deploy_pwa
+configure_pwa_tenant
 
 chmod 600 "$API_ROOT/.env" "$PWA_ROOT/.env"
 

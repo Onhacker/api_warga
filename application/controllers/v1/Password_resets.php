@@ -17,7 +17,8 @@ class Password_resets extends MY_Controller
         $result = $this->Password_reset_model->request_code(
             $email,
             isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '',
-            isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : ''
+            isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '',
+            isset($payload['tenant_code']) ? $payload['tenant_code'] : 'default'
         );
         if (empty($result['success'])) {
             return $this->fail(
@@ -48,7 +49,8 @@ class Password_resets extends MY_Controller
         $result = $this->Password_reset_model->complete(
             isset($payload['request_token']) ? $payload['request_token'] : '',
             isset($payload['otp']) ? $payload['otp'] : '',
-            isset($payload['new_password']) ? $payload['new_password'] : ''
+            isset($payload['new_password']) ? $payload['new_password'] : '',
+            isset($payload['tenant_code']) ? $payload['tenant_code'] : 'default'
         );
         if (empty($result['success'])) {
             $status = isset($result['status']) ? (int) $result['status'] : 422;
@@ -75,7 +77,8 @@ class Password_resets extends MY_Controller
             isset($payload['purpose']) ? $payload['purpose'] : '',
             isset($payload['target_email']) ? $payload['target_email'] : '',
             isset($payload['target_phone']) ? $payload['target_phone'] : '',
-            isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : ''
+            isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '',
+            isset($payload['tenant_code']) ? $payload['tenant_code'] : 'default'
         );
         if (empty($result['success'])) {
             $status = isset($result['status']) ? (int) $result['status'] : 422;
@@ -98,7 +101,8 @@ class Password_resets extends MY_Controller
             isset($payload['otp']) ? $payload['otp'] : '',
             isset($payload['target_email']) ? $payload['target_email'] : '',
             isset($payload['target_phone']) ? $payload['target_phone'] : '',
-            isset($payload['new_password']) ? $payload['new_password'] : ''
+            isset($payload['new_password']) ? $payload['new_password'] : '',
+            isset($payload['tenant_code']) ? $payload['tenant_code'] : 'default'
         );
         if (empty($result['success'])) {
             $status = isset($result['status']) ? (int) $result['status'] : 422;

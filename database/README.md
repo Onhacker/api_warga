@@ -31,7 +31,21 @@ status, dan dokumen tetap berjalan. Kolom `minimum_app_version` mencegah layanan
 pada instalasi yang belum mendukungnya, dan `village_service_overrides` disediakan hanya untuk
 pengecualian kampung tanpa menggandakan seluruh katalog.
 
-Jalankan `migrations/024_password_reset.sql` untuk mengaktifkan lupa password
+Jalankan `migrations/024_password_reset.sql` untuk mengaktifkan lupa password.
+
+Jalankan `migrations/025_account_security_branding.sql` untuk OTP perubahan akun
+dan branding publik. Setelah itu jalankan `migrations/026_multi_tenant_branding.sql`
+untuk branding PWA per kabupaten. Deployment PWA tiap kabupaten cukup mengisi
+`WARGA_TENANT_CODE` pada `.env`; instalasi lama yang kosong tetap memakai tenant
+`default` sebagai fallback.
+
+Untuk men-deploy kode PWA yang sama ke domain kabupaten lain, gunakan root dan
+URL PWA yang berbeda serta isi tenant saat menjalankan skrip:
+`PWA_ROOT=/home/USER/domains/pwa-kabupaten.example/public_html`
+`PWA_PUBLIC_URL=https://pwa-kabupaten.example`
+`PWA_TENANT_CODE=91.01 bash scripts/deploy-hostinger.sh`.
+Skrip hanya mengubah `WARGA_TENANT_CODE` pada `.env` PWA yang dipilih; database
+API tetap satu dan data kabupaten lain tidak ikut tercampur.
 PWA melalui OTP email. Tabel hanya menyimpan hash token, OTP, email, dan IP.
 API meneruskan pengiriman ke SmartDesa pusat memakai kredensial monitoring,
 sedangkan konfigurasi SMTP tetap dikelola pada **Pengaturan Notifikasi**.
