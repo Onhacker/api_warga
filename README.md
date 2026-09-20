@@ -19,6 +19,8 @@ POST /v1/sync/pull
 POST /v1/sync/push
 POST /v1/sync/ack
 POST /v1/monitoring/summary
+POST /v1/password-resets/request
+POST /v1/password-resets/complete
 GET  /v1/documents/{document-id}
 POST /v1/requests/{request-id}/official-document
 ```
@@ -53,6 +55,12 @@ hanya berisi metrik agregat per kampung: status instalasi, waktu koneksi, versi,
 penduduk/katalog/akun/permohonan, dan antrean. NIK, No. KK, password, payload, dan dokumen
 tidak dikirim ke dashboard.
 
+`/v1/password-resets/request` dan `/v1/password-resets/complete` adalah endpoint publik
+terbatas untuk alur Lupa Kata Sandi PWA. Keduanya tidak menerima kredensial SMTP dan tidak
+mengembalikan apakah sebuah email terdaftar. API menyimpan hash token/OTP/email/IP, lalu
+meneruskan pengiriman kode melalui relay HMAC ke SmartDesa pusat. Pastikan `024` sudah
+diterapkan dan layanan SMTP pada **Pengaturan Notifikasi** pusat aktif.
+
 Endpoint `official-document` menerima PDF resmi setelah permohonan berstatus `approved`.
 Isi PDF, hash SHA-256, desa pemilik, dan identitas permohonan diverifikasi sebelum status
 berubah menjadi `issued`. Pengiriman ulang PDF yang sama bersifat idempotent; PDF berbeda
@@ -84,7 +92,8 @@ berpindah ke grant.
 
 Untuk deployment rutin di Hostinger setelah instalasi awal, jalankan satu perintah berikut
 dari repository API. Skrip mempertahankan `.env`, upload, log, dan data runtime; membuat
-backup database; menjalankan seluruh migrasi aplikasi sampai `022`; lalu memeriksa health API.
+backup database; menjalankan migrasi aplikasi sampai `024` (termasuk migration schema bersama
+`023` dari repository PWA); lalu memeriksa health API.
 
 ```bash
 cd "$HOME/repositories/api_warga"
@@ -93,10 +102,12 @@ bash scripts/deploy-hostinger.sh
 
 1. Buat database `smartdesa_warga`, impor `database/schema.sql`, lalu `database/seed.sql` dari proyek PWA.
 2. Jika database lama, jalankan berkas pada `database/migrations` sesuai urutan sampai
-   `022_global_service_catalog.sql`. Migrasi `009` menambahkan metadata dokumen resmi,
+   `024_password_reset.sql`. Migration `023_security_hardening.sql` dibaca dari repository PWA
+   karena database API dan PWA dipakai bersama. Migrasi `009` menambahkan metadata dokumen resmi,
    `010` memperpanjang `sync_messages.aggregate_id`, `015` menambahkan fingerprint pesan,
    versi direktori, serta staging snapshot atomik, `019` menambahkan pencegah replay untuk
-   dashboard monitoring, dan `022` mengaktifkan katalog layanan global.
+   dashboard monitoring, `022` mengaktifkan katalog layanan global, dan `024`
+   menambahkan penyimpanan OTP reset password PWA yang terproteksi hash.
 3. Upload isi folder ini ke document root `api-warga-smartdesa.mediaverse.co.id`.
 4. Salin `.env.example` menjadi `.env`, isi `APP_KEY`, database, dan `WARGA_ALLOWED_ORIGIN`.
 5. Buat folder `PRIVATE_STORAGE_PATH` di luar `public_html`, pastikan dapat ditulis PHP,
@@ -129,6 +140,13 @@ bash scripts/deploy-hostinger.sh
     kampung, lalu mematikan mode enrollment sementara. Tidak ada kode atau pengaturan API yang
     perlu diketik oleh desa.
 11. `tools/issue_enrollment_codes.php` dan endpoint `/v1/installations/enroll` dipertahankan hanya sebagai jalur pemulihan instalasi lama. Jangan gunakan alur pembagian kode untuk pemasangan normal.
+
+    Reset password PWA memakai OTP email melalui endpoint publik yang dibatasi
+    per email dan alamat sumber. API hanya menyimpan hash token, OTP, email, dan
+    IP. Pengiriman email diteruskan secara HMAC ke
+    `SMARTDESA_NOTIFICATION_RELAY_URL` memakai kredensial monitoring
+    server-ke-server; SMTP tetap dikelola satu kali pada **Pengaturan
+    Notifikasi** SmartDesa pusat.
 12. Pantau cakupan dan aktivitas tanpa membuka secret dengan `php tools/report_installations.php --env="$API_ENV" --format=text` atau `--format=csv`. Status `last_seen_at` diperbarui setiap permintaan bertanda tangan dan `last_sync_at` setelah pull/push/ack berhasil.
 13. Uji `GET /v1/health`, koneksi otomatis satu desa pilot, pemutusan bootstrap lokal,
     katalog layanan, verifikasi penduduk, pull/push, serta penerbitan dan unduh dokumen sebelum

@@ -31,4 +31,11 @@ status, dan dokumen tetap berjalan. Kolom `minimum_app_version` mencegah layanan
 pada instalasi yang belum mendukungnya, dan `village_service_overrides` disediakan hanya untuk
 pengecualian kampung tanpa menggandakan seluruh katalog.
 
+Jalankan `migrations/024_password_reset.sql` untuk mengaktifkan lupa password
+PWA melalui OTP email. Tabel hanya menyimpan hash token, OTP, email, dan IP.
+API meneruskan pengiriman ke SmartDesa pusat memakai kredensial monitoring,
+sedangkan konfigurasi SMTP tetap dikelola pada **Pengaturan Notifikasi**.
+Migration `023_security_hardening.sql` berasal dari repository PWA karena schema-nya
+dipakai bersama; jalankan sebelum `024`.
+
 Migration `004` dan endpoint bootstrap lama hanya dipertahankan sebagai jalur pemulihan terkontrol. Alur utama memakai grant aktivasi sekali pakai: aplikasi lokal membaca kode kampung dari identitas instalasi, meminta grant singkat dari server aktivasi, lalu API menerbitkan kredensial khusus instalasi. Secret penandatangan grant hanya berada di server aktivasi dan API; jangan menyimpannya di repository, `.env.build`, installer, atau membagikannya kepada desa.

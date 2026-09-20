@@ -106,7 +106,7 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
     --single-transaction --skip-lock-tables "$database_name" >"$backup_file"
 chmod 600 "$backup_file"
 
-printf 'Menjalankan migrasi database 006 sampai 022...\n'
+printf 'Menjalankan migrasi database 006 sampai 024...\n'
 for migration in \
     006_service_catalog \
     007_resident_directory \
@@ -131,6 +131,23 @@ do
     fi
     mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
 done
+
+# Migration 023 berada di repository PWA karena menambahkan session_version
+# dan pembatasan pendaftaran pada schema bersama. Jalankan sebelum tabel reset
+# password 024 agar pencabutan session setelah reset ikut aktif.
+shared_migration="$PWA_REPO/database/migrations/023_security_hardening.sql"
+if [[ ! -f "$shared_migration" ]]; then
+    printf 'ERROR: migrasi schema bersama tidak ditemukan: %s\n' "$shared_migration" >&2
+    exit 1
+fi
+mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$shared_migration"
+
+migration_file="$API_REPO/database/migrations/024_password_reset.sql"
+if [[ ! -f "$migration_file" ]]; then
+    printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
+    exit 1
+fi
+mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
 
 deploy_api() {
     rsync -a --delete \
