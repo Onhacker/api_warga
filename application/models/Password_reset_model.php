@@ -21,7 +21,7 @@ class Password_reset_model extends CI_Model
     public function schema_ready()
     {
         if (!$this->db->table_exists($this->table)) return FALSE;
-        foreach (array('request_token_hash', 'user_id', 'email_hash', 'ip_hash', 'otp_hash', 'status', 'attempts', 'expires_at') as $field) {
+        foreach (array('request_token_hash', 'user_id', 'purpose', 'email_hash', 'target_email_hash', 'target_phone_hash', 'ip_hash', 'otp_hash', 'status', 'attempts', 'expires_at') as $field) {
             if (!$this->db->field_exists($field, $this->table)) return FALSE;
         }
         return TRUE;
@@ -31,6 +31,15 @@ class Password_reset_model extends CI_Model
     {
         $email = strtolower(trim((string) $email));
         return strlen($email) <= 180 && filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : '';
+    }
+
+    public function normalize_phone($phone)
+    {
+        $phone = trim((string) $phone);
+        if ($phone === '') return '';
+        if (!preg_match('/^[0-9+() .-]+$/', $phone)) return '';
+        $phone = preg_replace('/[^0-9+]/', '', $phone);
+        return preg_match('/^\+?[0-9]{8,15}$/', $phone) ? $phone : '';
     }
 
     public function request_code($email, $ip, $user_agent = '')
@@ -78,6 +87,7 @@ class Password_reset_model extends CI_Model
         $row = array(
             'request_token_hash' => $this->value_hash('token|' . $request_token),
             'user_id' => $user ? (int) $user['id'] : NULL,
+            'purpose' => 'password_reset',
             'email_hash' => $email_hash,
             'ip_hash' => $ip_hash,
             'otp_hash' => password_hash($otp, PASSWORD_DEFAULT),
@@ -94,7 +104,7 @@ class Password_reset_model extends CI_Model
         $request_id = (int) $this->db->insert_id();
 
         if ($user) {
-            $delivery = $this->send_central_email($email, (string) $user['name'], $otp);
+            $delivery = $this->send_central_email($email, (string) $user['name'], $otp, 'password_reset');
             if (empty($delivery['success'])) {
                 $this->db->where('id', $request_id)->update($this->table, array(
                     'status' => 'delivery_failed',
@@ -111,8 +121,143 @@ class Password_reset_model extends CI_Model
             'email_masked' => $this->mask_email($email),
             'expires_in' => 600,
             'resend_after' => 60,
-            'message' => 'Jika email terdaftar, kode 6 digit akan dikirim oleh layanan pusat.'
+            'message' => 'Jika email terdaftar, kode 6 digit akan dikirim oleh layanan pusat. Periksa Inbox, Spam, atau Promosi; email yang belum terdaftar tidak akan menerima kode.'
         );
+    }
+
+    /**
+     * Start an authenticated account change. The API receives the current
+     * password, but never stores it. The OTP is delivered to an email address
+     * owned by the account (or the new email when changing it).
+     */
+    public function request_account_change($userId, $currentPassword, $purpose, $targetEmail, $targetPhone, $ip)
+    {
+        $userId = (int) $userId;
+        $purpose = strtolower(trim((string) $purpose));
+        $rawEmail = trim((string) $targetEmail);
+        $rawPhone = trim((string) $targetPhone);
+        $targetEmail = $this->normalize_email($targetEmail);
+        $targetPhone = $this->normalize_phone($targetPhone);
+        if ($userId < 1 || !in_array($purpose, array('contact', 'password'), TRUE)) {
+            return array('success' => FALSE, 'message' => 'Permintaan keamanan akun tidak valid.', 'status' => 422);
+        }
+        if (!$this->schema_ready()) return array('success' => FALSE, 'message' => 'Layanan keamanan akun belum selesai diperbarui.', 'status' => 503);
+        if ($purpose === 'contact' && (($rawEmail !== '' && $targetEmail === '') || ($rawPhone !== '' && $targetPhone === ''))) return array('success' => FALSE, 'message' => 'Email atau nomor telepon belum valid.', 'status' => 422);
+        $user = $this->db->select('id,name,email,phone,password_hash')->where(array('id' => $userId, 'is_active' => 1))->limit(1)->get('users')->row_array();
+        if (!$user || !password_verify((string) $currentPassword, (string) $user['password_hash'])) {
+            return array('success' => FALSE, 'message' => 'Kata sandi saat ini tidak sesuai.', 'status' => 422);
+        }
+        $currentEmail = $this->normalize_email($user['email'] ?? '');
+        if ($purpose === 'contact') {
+            if ($targetEmail === '') return array('success' => FALSE, 'message' => 'Email aktif wajib diisi agar keamanan dan pemulihan akun tetap tersedia.', 'status' => 422);
+            $destination = $targetEmail;
+            if ($targetEmail !== '' || $targetPhone !== '') {
+                $this->db->group_start();
+                if ($targetEmail !== '') $this->db->where('email', $targetEmail)->or_where('username', $targetEmail);
+                if ($targetPhone !== '') $this->db->or_where('phone', $targetPhone)->or_where('username', $targetPhone);
+                $this->db->group_end()->where('id !=', $userId);
+                if ($this->db->count_all_results('users') > 0) return array('success' => FALSE, 'message' => 'Email atau nomor telepon sudah digunakan akun lain.', 'status' => 409);
+            }
+        } else {
+            $destination = $currentEmail;
+            if ($destination === '') return array('success' => FALSE, 'message' => 'Tambahkan email akun terlebih dahulu agar kode keamanan dapat dikirim.', 'status' => 422);
+            $targetEmail = $currentEmail;
+            $targetPhone = $this->normalize_phone($user['phone'] ?? '');
+        }
+        $ipHash = $this->value_hash('ip|' . $this->normalize_ip($ip));
+        $since = date('Y-m-d H:i:s', time() - 900);
+        $recentUser = (int) $this->db->where('user_id', $userId)->where_in('purpose', array('contact_change', 'password_change'))->where('created_at >=', $since)->count_all_results($this->table);
+        $recentIp = (int) $this->db->where('ip_hash', $ipHash)->where_in('purpose', array('contact_change', 'password_change'))->where('created_at >=', $since)->count_all_results($this->table);
+        if ($recentUser >= 5 || $recentIp >= 5000) {
+            return array('success' => FALSE, 'message' => 'Terlalu banyak permintaan kode. Silakan tunggu 15 menit.', 'status' => 429);
+        }
+        try {
+            $requestToken = bin2hex(random_bytes(32));
+            $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        } catch (Exception $e) {
+            return array('success' => FALSE, 'message' => 'Kode keamanan belum dapat dibuat.', 'status' => 503);
+        }
+        $now = date('Y-m-d H:i:s');
+        $row = array(
+            'request_token_hash' => $this->value_hash('token|' . $requestToken),
+            'user_id' => $userId,
+            'purpose' => $purpose . '_change',
+            'email_hash' => $this->value_hash('email|' . $destination),
+            'target_email_hash' => $this->value_hash('target-email|' . $targetEmail),
+            'target_phone_hash' => $this->value_hash('target-phone|' . $targetPhone),
+            'ip_hash' => $ipHash,
+            'otp_hash' => password_hash($otp, PASSWORD_DEFAULT),
+            'status' => 'account_pending',
+            'attempts' => 0,
+            'max_attempts' => 5,
+            'expires_at' => date('Y-m-d H:i:s', time() + 600),
+            'created_at' => $now,
+            'updated_at' => $now
+        );
+        if (!$this->db->insert($this->table, $row)) return array('success' => FALSE, 'message' => 'Permintaan keamanan belum dapat disimpan.', 'status' => 503);
+        $requestId = (int) $this->db->insert_id();
+        $sent = $this->send_central_email($destination, (string) $user['name'], $otp, 'account_change');
+        if (empty($sent['success'])) {
+            $this->db->where('id', $requestId)->update($this->table, array('status' => 'delivery_failed', 'updated_at' => date('Y-m-d H:i:s')));
+            log_message('error', 'Relay email OTP perubahan akun gagal: ' . ($sent['message'] ?? 'unknown'));
+            return array('success' => FALSE, 'message' => 'Kode verifikasi belum berhasil dikirim. Silakan coba lagi.', 'status' => 503);
+        }
+        return array('success' => TRUE, 'request_token' => $requestToken, 'email_masked' => $this->mask_email($destination), 'expires_in' => 600, 'resend_after' => 60, 'message' => 'Kode verifikasi telah dikirim ke email akun. Periksa Inbox, Spam, atau Promosi.');
+    }
+
+    public function complete_account_change($userId, $purpose, $requestToken, $otp, $targetEmail, $targetPhone, $newPassword = '')
+    {
+        $userId = (int) $userId;
+        $purpose = strtolower(trim((string) $purpose));
+        $requestToken = strtolower(trim((string) $requestToken));
+        $otp = preg_replace('/\D+/', '', (string) $otp);
+        $targetEmail = $this->normalize_email($targetEmail);
+        $targetPhone = $this->normalize_phone($targetPhone);
+        if ($userId < 1 || !in_array($purpose, array('contact', 'password'), TRUE) || !preg_match('/^[a-f0-9]{64}$/', $requestToken) || !preg_match('/^[0-9]{6}$/', $otp)) return array('success' => FALSE, 'message' => 'Kode verifikasi tidak valid.', 'status' => 422);
+        if ($purpose === 'password' && (strlen((string) $newPassword) < 8 || strlen((string) $newPassword) > 72 || strpos((string) $newPassword, "\0") !== FALSE)) return array('success' => FALSE, 'message' => 'Kata sandi baru harus 8–72 karakter.', 'status' => 422);
+        if (!$this->schema_ready() || !$this->db->trans_begin()) return array('success' => FALSE, 'message' => 'Layanan keamanan akun belum siap.', 'status' => 503);
+        $row = $this->db->query("SELECT * FROM `{$this->table}` WHERE request_token_hash = ? AND user_id = ? AND purpose = ? AND status = 'account_pending' LIMIT 1 FOR UPDATE", array($this->value_hash('token|' . $requestToken), $userId, $purpose . '_change'))->row_array();
+        if (!$row || strtotime((string) $row['expires_at']) < time()) {
+            if ($row) $this->db->where('id', (int) $row['id'])->update($this->table, array('status' => 'expired', 'updated_at' => date('Y-m-d H:i:s')));
+            $this->db->trans_commit();
+            return array('success' => FALSE, 'message' => 'Kode sudah kedaluwarsa atau tidak lagi berlaku.', 'status' => 410);
+        }
+        $attempts = (int) $row['attempts'];
+        $max = max(1, (int) $row['max_attempts']);
+        if (!password_verify($otp, (string) $row['otp_hash'])) {
+            $attempts++;
+            $this->db->where('id', (int) $row['id'])->update($this->table, array('attempts' => $attempts, 'status' => $attempts >= $max ? 'blocked' : 'account_pending', 'updated_at' => date('Y-m-d H:i:s')));
+            $this->db->trans_commit();
+            return array('success' => FALSE, 'message' => $attempts >= $max ? 'Kode salah lima kali. Minta kode baru.' : 'Kode belum benar. Sisa percobaan: ' . ($max - $attempts) . '.', 'status' => $attempts >= $max ? 429 : 422);
+        }
+        if (!hash_equals((string) $row['target_email_hash'], $this->value_hash('target-email|' . $targetEmail)) || !hash_equals((string) $row['target_phone_hash'], $this->value_hash('target-phone|' . $targetPhone))) {
+            $this->db->trans_rollback();
+            return array('success' => FALSE, 'message' => 'Data perubahan akun sudah berubah. Minta kode baru.', 'status' => 409);
+        }
+        $user = $this->db->select('id,email,phone,password_hash')->where(array('id' => $userId, 'is_active' => 1))->limit(1)->get('users')->row_array();
+        if (!$user) { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Akun tidak tersedia.', 'status' => 410); }
+        if ($purpose === 'contact') {
+            if ($targetEmail === '') { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Email aktif wajib diisi agar keamanan dan pemulihan akun tetap tersedia.', 'status' => 422); }
+            $this->db->group_start();
+            if ($targetEmail !== '') $this->db->where('email', $targetEmail)->or_where('username', $targetEmail);
+            if ($targetPhone !== '') $this->db->or_where('phone', $targetPhone)->or_where('username', $targetPhone);
+            $this->db->group_end()->where('id !=', $userId);
+            if ($this->db->count_all_results('users') > 0) { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Email atau nomor telepon sudah digunakan akun lain.', 'status' => 409); }
+            $updated = $this->db->where(array('id' => $userId, 'is_active' => 1))->update('users', array('email' => $targetEmail !== '' ? $targetEmail : NULL, 'phone' => $targetPhone !== '' ? $targetPhone : NULL, 'updated_at' => date('Y-m-d H:i:s')));
+            $message = 'Email dan nomor telepon berhasil diperbarui.';
+        } else {
+            if (password_verify((string) $newPassword, (string) $user['password_hash'])) { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Kata sandi baru harus berbeda dari kata sandi sebelumnya.', 'status' => 422); }
+            $hash = password_hash((string) $newPassword, PASSWORD_DEFAULT);
+            $this->db->set('password_hash', $hash)->set('updated_at', date('Y-m-d H:i:s'));
+            if ($this->db->field_exists('session_version', 'users')) $this->db->set('session_version', 'session_version + 1', FALSE);
+            $updated = $this->db->where(array('id' => $userId, 'is_active' => 1))->update('users');
+            $message = 'Kata sandi berhasil diperbarui. Silakan masuk kembali.';
+        }
+        $used = $this->db->where(array('id' => (int) $row['id'], 'status' => 'account_pending'))->update($this->table, array('status' => 'used', 'verified_at' => date('Y-m-d H:i:s'), 'used_at' => date('Y-m-d H:i:s'), 'updated_at' => date('Y-m-d H:i:s')));
+        if (!$updated || !$used || !$this->db->trans_status()) { $this->db->trans_rollback(); return array('success' => FALSE, 'message' => 'Perubahan akun belum dapat disimpan.', 'status' => 503); }
+        $this->db->where('user_id', $userId)->where('id !=', (int) $row['id'])->where_in('status', array('account_pending', 'pending', 'decoy'))->update($this->table, array('status' => 'expired', 'updated_at' => date('Y-m-d H:i:s')));
+        if (!$this->db->trans_commit()) return array('success' => FALSE, 'message' => 'Perubahan akun belum dapat diselesaikan.', 'status' => 503);
+        return array('success' => TRUE, 'message' => $message, 'email' => $targetEmail, 'phone' => $targetPhone);
     }
 
     public function complete($request_token, $otp, $new_password)
@@ -204,7 +349,7 @@ class Password_reset_model extends CI_Model
         return array('success' => TRUE, 'message' => 'Kata sandi berhasil diperbarui. Silakan masuk kembali.');
     }
 
-    private function send_central_email($email, $name, $otp)
+    private function send_central_email($email, $name, $otp, $purpose = 'password_reset')
     {
         $url = trim((string) getenv('SMARTDESA_NOTIFICATION_RELAY_URL'));
         if ($url === '') $url = 'https://smartdesa.mediaverse.co.id/password_reset_api/warga_otp';
@@ -227,6 +372,7 @@ class Password_reset_model extends CI_Model
             'account' => $email,
             'otp' => $otp,
             'expires_minutes' => 10,
+            'purpose' => $purpose === 'account_change' ? 'account_change' : 'password_reset',
             'source' => 'warga-pwa'
         ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (!is_string($body)) return array('success' => FALSE, 'message' => 'Payload email tidak dapat dibuat.');

@@ -106,7 +106,7 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
     --single-transaction --skip-lock-tables "$database_name" >"$backup_file"
 chmod 600 "$backup_file"
 
-printf 'Menjalankan migrasi database 006 sampai 024...\n'
+printf 'Menjalankan migrasi database 006 sampai 025...\n'
 for migration in \
     006_service_catalog \
     007_resident_directory \
@@ -143,6 +143,13 @@ fi
 mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$shared_migration"
 
 migration_file="$API_REPO/database/migrations/024_password_reset.sql"
+if [[ ! -f "$migration_file" ]]; then
+    printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
+    exit 1
+fi
+mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+
+migration_file="$API_REPO/database/migrations/025_account_security_branding.sql"
 if [[ ! -f "$migration_file" ]]; then
     printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
     exit 1

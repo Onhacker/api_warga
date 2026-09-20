@@ -61,4 +61,49 @@ class Password_resets extends MY_Controller
 
         return $this->respond(array('success' => TRUE, 'message' => $result['message']));
     }
+
+    public function request_account_change()
+    {
+        if (!$this->require_method('POST')) return;
+        if (!isset($this->db)) return $this->fail('Database API belum tersedia.', 503, 'service_unavailable');
+        $payload = $this->read_json();
+        if ($payload === FALSE) return;
+        $this->load->model('Password_reset_model');
+        $result = $this->Password_reset_model->request_account_change(
+            isset($payload['account_id']) ? $payload['account_id'] : 0,
+            isset($payload['current_password']) ? $payload['current_password'] : '',
+            isset($payload['purpose']) ? $payload['purpose'] : '',
+            isset($payload['target_email']) ? $payload['target_email'] : '',
+            isset($payload['target_phone']) ? $payload['target_phone'] : '',
+            isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : ''
+        );
+        if (empty($result['success'])) {
+            $status = isset($result['status']) ? (int) $result['status'] : 422;
+            return $this->fail($result['message'], $status, $status === 429 ? 'rate_limited' : 'account_change_rejected');
+        }
+        return $this->respond($result);
+    }
+
+    public function complete_account_change()
+    {
+        if (!$this->require_method('POST')) return;
+        if (!isset($this->db)) return $this->fail('Database API belum tersedia.', 503, 'service_unavailable');
+        $payload = $this->read_json();
+        if ($payload === FALSE) return;
+        $this->load->model('Password_reset_model');
+        $result = $this->Password_reset_model->complete_account_change(
+            isset($payload['account_id']) ? $payload['account_id'] : 0,
+            isset($payload['purpose']) ? $payload['purpose'] : '',
+            isset($payload['request_token']) ? $payload['request_token'] : '',
+            isset($payload['otp']) ? $payload['otp'] : '',
+            isset($payload['target_email']) ? $payload['target_email'] : '',
+            isset($payload['target_phone']) ? $payload['target_phone'] : '',
+            isset($payload['new_password']) ? $payload['new_password'] : ''
+        );
+        if (empty($result['success'])) {
+            $status = isset($result['status']) ? (int) $result['status'] : 422;
+            return $this->fail($result['message'], $status, $status === 429 ? 'rate_limited' : 'account_change_rejected');
+        }
+        return $this->respond($result);
+    }
 }

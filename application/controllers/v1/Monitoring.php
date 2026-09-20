@@ -162,6 +162,27 @@ class Monitoring extends MY_Controller
         return $this->respond($result);
     }
 
+    /** Branding PWA ditulis hanya oleh server pusat melalui kredensial monitoring. */
+    public function branding()
+    {
+        if (!$this->require_method('POST')) return;
+        if (!$this->authenticate_monitoring()) return;
+        if (!isset($this->db) || empty($this->db->conn_id)) return $this->fail('Database API belum tersedia.', 503, 'service_unavailable');
+        $payload = $this->read_json();
+        if ($payload === FALSE) return;
+        $operation = strtolower(trim((string) (isset($payload['operation']) ? $payload['operation'] : 'status')));
+        if (!in_array($operation, array('status', 'publish'), TRUE)) return $this->fail('Operasi branding tidak valid.', 422, 'invalid_branding_operation');
+        $this->load->model('Public_branding_model');
+        $result = $operation === 'publish' ? $this->Public_branding_model->publish($payload) : $this->Public_branding_model->status();
+        if (empty($result['success'])) {
+            $error = isset($result['error']) ? (string) $result['error'] : 'branding_failed';
+            $status = in_array($error, array('migration_required', 'storage_error'), TRUE) ? 503 : 422;
+            return $this->fail(isset($result['message']) ? $result['message'] : 'Branding PWA belum dapat diproses.', $status, $error);
+        }
+        $result['server_time'] = date('c');
+        return $this->respond($result);
+    }
+
     private function validate_payload(array $payload)
     {
         if (!isset($payload['regencies']) || !is_array($payload['regencies'])
