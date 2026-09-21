@@ -15,6 +15,7 @@ class Sync extends MY_Controller
         $messages = $this->Sync_model->pull($installation, $limit);
         $residentDirectory = $this->Sync_model->resident_directory_state($installation);
         $staffAccounts = $this->Sync_model->staff_accounts_state($installation);
+        $branding = $this->branding_state($installation);
         $this->touch_installation(TRUE, isset($payload['app_version']) ? $payload['app_version'] : '');
         return $this->respond(array(
             'success' => TRUE,
@@ -23,10 +24,41 @@ class Sync extends MY_Controller
             'messages' => $messages,
             'sync_state' => array(
                 'resident_directory' => $residentDirectory,
-                'staff_accounts' => $staffAccounts
+                'staff_accounts' => $staffAccounts,
+                'branding' => $branding
             ),
             'server_time' => date('c')
         ));
+    }
+
+    private function branding_state(array $installation)
+    {
+        $villageCode = strtoupper(trim((string) ($installation['village_code'] ?? '')));
+        $tenantCode = preg_match('/^([0-9]{2}\.[0-9]{2})(?:\.|$)/', $villageCode, $match)
+            ? $match[1] : 'default';
+
+        $this->load->model('Public_branding_model');
+        $result = $this->Public_branding_model->status($tenantCode);
+        if (empty($result['success']) || empty($result['branding']) || !is_array($result['branding'])) {
+            return array(
+                'ready' => FALSE,
+                'tenant_code' => $tenantCode,
+                'updated_at' => ''
+            );
+        }
+
+        return array(
+            'ready' => !empty($result['branding']['region_labels_managed']),
+            'tenant_code' => (string) ($result['branding']['tenant_code'] ?? $tenantCode),
+            'resolved_tenant' => (string) ($result['resolved_tenant'] ?? $tenantCode),
+            'nama_sistem' => (string) ($result['branding']['nama_sistem'] ?? ''),
+            'kepanjangan' => (string) ($result['branding']['kepanjangan'] ?? ''),
+            'tagline' => (string) ($result['branding']['tagline'] ?? ''),
+            'bentuk_lembaga' => (string) ($result['branding']['bentuk_lembaga'] ?? ''),
+            'bentuk_kecamatan' => (string) ($result['branding']['bentuk_kecamatan'] ?? ''),
+            'region_labels_managed' => !empty($result['branding']['region_labels_managed']) ? 1 : 0,
+            'updated_at' => (string) ($result['updated_at'] ?? '')
+        );
     }
 
     public function ack()

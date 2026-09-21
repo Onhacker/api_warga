@@ -37,10 +37,14 @@ class Public_branding_model extends CI_Model
 
         $branding = $this->normalise($payload, $tenantCode);
         if ($branding['nama_sistem'] === '') return array('success' => FALSE, 'error' => 'invalid_branding', 'message' => 'Nama sistem wajib diisi.');
+        $branding['region_labels_managed'] = 1;
         $row = array(
             'nama_sistem' => $branding['nama_sistem'],
             'kepanjangan' => $branding['kepanjangan'],
             'tagline' => $branding['tagline'],
+            'bentuk_lembaga' => $branding['bentuk_lembaga'],
+            'bentuk_kecamatan' => $branding['bentuk_kecamatan'],
+            'region_labels_managed' => 1,
             'updated_at' => date('Y-m-d H:i:s')
         );
         if ($this->tenant_ready()) {
@@ -63,7 +67,7 @@ class Public_branding_model extends CI_Model
     private function ready()
     {
         if (!$this->db->table_exists($this->table)) return FALSE;
-        foreach (array('id', 'nama_sistem', 'kepanjangan', 'tagline', 'updated_at') as $field) {
+        foreach (array('id', 'nama_sistem', 'kepanjangan', 'tagline', 'bentuk_lembaga', 'bentuk_kecamatan', 'region_labels_managed', 'updated_at') as $field) {
             if (!$this->db->field_exists($field, $this->table)) return FALSE;
         }
         return TRUE;
@@ -90,7 +94,10 @@ class Public_branding_model extends CI_Model
             'tenant_name' => $this->clean(isset($row['tenant_name']) ? $row['tenant_name'] : '', 120),
             'nama_sistem' => $this->clean(isset($row['nama_sistem']) ? $row['nama_sistem'] : 'SIDAPULIK', 100, 'SIDAPULIK'),
             'kepanjangan' => $this->clean(isset($row['kepanjangan']) ? $row['kepanjangan'] : '', 180),
-            'tagline' => $this->clean(isset($row['tagline']) ? $row['tagline'] : '', 255, 'Bersama Membangun Kampung Digital')
+            'tagline' => $this->clean(isset($row['tagline']) ? $row['tagline'] : '', 255, 'Bersama Membangun Kampung Digital'),
+            'bentuk_lembaga' => $this->label(isset($row['bentuk_lembaga']) ? $row['bentuk_lembaga'] : '', 'Desa'),
+            'bentuk_kecamatan' => $this->label(isset($row['bentuk_kecamatan']) ? $row['bentuk_kecamatan'] : '', 'Kecamatan'),
+            'region_labels_managed' => !empty($row['region_labels_managed']) ? 1 : 0
         );
     }
 
@@ -109,5 +116,13 @@ class Public_branding_model extends CI_Model
         $value = preg_replace('/\s+/u', ' ', trim((string) $value));
         $value = function_exists('mb_substr') ? mb_substr($value, 0, (int) $max, 'UTF-8') : substr($value, 0, (int) $max);
         return $value !== '' ? $value : $fallback;
+    }
+
+    private function label($value, $fallback)
+    {
+        $value = $this->clean($value, 100, $fallback);
+        return function_exists('mb_convert_case')
+            ? mb_convert_case(mb_strtolower($value, 'UTF-8'), MB_CASE_TITLE, 'UTF-8')
+            : ucwords(strtolower($value));
     }
 }

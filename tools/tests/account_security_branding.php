@@ -96,6 +96,11 @@ try {
     check($apiTenantMigration === $pwaTenantMigration, 'API and PWA use the exact same multi-tenant branding migration');
     sql_batch($admin, $apiTenantMigration);
     sql_batch($admin, $apiTenantMigration);
+    $apiInstitutionMigration = file_get_contents($root . '/database/migrations/027_institution_labels.sql');
+    $pwaInstitutionMigration = file_get_contents($pwa . '/database/migrations/027_institution_labels.sql');
+    check($apiInstitutionMigration === $pwaInstitutionMigration, 'API and PWA use the exact same institution label migration');
+    sql_batch($admin, $apiInstitutionMigration);
+    sql_batch($admin, $apiInstitutionMigration);
 
     $db = DB(array(
         'hostname' => $socket ?: $host, 'username' => $user, 'password' => $password,
@@ -175,12 +180,17 @@ try {
         'tenant_name' => 'Jayawijaya',
         'nama_sistem' => '<b>SIDAPULIK Papua</b>',
         'kepanjangan' => 'Sistem Informasi Pelayanan Publik',
-        'tagline' => 'Melayani warga dengan cepat'
+        'tagline' => 'Melayani warga dengan cepat',
+        'bentuk_lembaga' => 'Kampung',
+        'bentuk_kecamatan' => 'Distrik'
     ));
     check(!empty($published['success']), 'central branding publication succeeds');
     $status = $branding->status('95.01');
     check(($status['branding']['nama_sistem'] ?? '') === 'SIDAPULIK Papua', 'published branding is sanitized and readable');
     check(($status['branding']['tagline'] ?? '') === 'Melayani warga dengan cepat', 'published tagline is readable by the PWA');
+    check(($status['branding']['bentuk_lembaga'] ?? '') === 'Kampung', 'published institution label is readable by the PWA');
+    check(($status['branding']['bentuk_kecamatan'] ?? '') === 'Distrik', 'published district label is readable by the PWA');
+    check((int) ($status['branding']['region_labels_managed'] ?? 0) === 1, 'published region labels are marked authoritative');
     check(($status['branding']['tenant_code'] ?? '') === '95.01', 'branding is stored under the requested regency tenant');
     $otherPublished = $branding->publish(array(
         'tenant_code' => '91.01',
