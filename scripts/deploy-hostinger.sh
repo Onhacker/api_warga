@@ -55,8 +55,9 @@ chmod 750 "$PRIVATE_ROOT" "$PRIVATE_ROOT/backups" "$PRIVATE_ROOT/warga"
 
 mysql_defaults="$(mktemp "${TMPDIR:-/tmp}/smartdesa-warga-mysql.XXXXXX")"
 database_name_file="$mysql_defaults.database"
+migration_bundle="$mysql_defaults.migrations"
 cleanup() {
-    rm -f "$mysql_defaults" "$database_name_file"
+    rm -f "$mysql_defaults" "$database_name_file" "$migration_bundle"
 }
 trap cleanup EXIT
 chmod 600 "$mysql_defaults"
@@ -108,6 +109,7 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
 chmod 600 "$backup_file"
 
 printf 'Menjalankan migrasi database 006 sampai 027...\n'
+migration_files=()
 for migration in \
     006_service_catalog \
     007_resident_directory \
@@ -130,7 +132,7 @@ do
         printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
         exit 1
     fi
-    mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+    migration_files+=("$migration_file")
 done
 
 # Migration 023 berada di repository PWA karena menambahkan session_version
@@ -141,35 +143,59 @@ if [[ ! -f "$shared_migration" ]]; then
     printf 'ERROR: migrasi schema bersama tidak ditemukan: %s\n' "$shared_migration" >&2
     exit 1
 fi
-mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$shared_migration"
+migration_files+=("$shared_migration")
 
 migration_file="$API_REPO/database/migrations/024_password_reset.sql"
 if [[ ! -f "$migration_file" ]]; then
     printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
     exit 1
 fi
-mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+migration_files+=("$migration_file")
 
 migration_file="$API_REPO/database/migrations/025_account_security_branding.sql"
 if [[ ! -f "$migration_file" ]]; then
     printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
     exit 1
 fi
-mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+migration_files+=("$migration_file")
 
 migration_file="$API_REPO/database/migrations/026_multi_tenant_branding.sql"
 if [[ ! -f "$migration_file" ]]; then
     printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
     exit 1
 fi
-mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+migration_files+=("$migration_file")
 
 migration_file="$API_REPO/database/migrations/027_institution_labels.sql"
 if [[ ! -f "$migration_file" ]]; then
     printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
     exit 1
 fi
-mysql --defaults-extra-file="$mysql_defaults" "$database_name" <"$migration_file"
+migration_files+=("$migration_file")
+
+# Shared hosting can intermittently reject a new local-socket connection when
+# every migration opens its own mysql process. Run the ordered, repeatable
+# migrations in one client session and retry that session on a transient drop.
+: >"$migration_bundle"
+chmod 600 "$migration_bundle"
+for migration_file in "${migration_files[@]}"; do
+    printf 'SOURCE %s;\n' "$migration_file" >>"$migration_bundle"
+done
+
+migration_attempt=1
+migration_attempts=4
+while ! mysql --defaults-extra-file="$mysql_defaults" \
+    --batch --skip-column-names "$database_name" \
+    <"$migration_bundle" >/dev/null; do
+    if (( migration_attempt >= migration_attempts )); then
+        printf 'ERROR: migrasi database gagal setelah %d percobaan.\n' "$migration_attempts" >&2
+        exit 1
+    fi
+    printf 'Koneksi migrasi terputus; mencoba lagi (%d/%d)...\n' \
+        "$((migration_attempt + 1))" "$migration_attempts" >&2
+    sleep "$((migration_attempt * 2))"
+    migration_attempt=$((migration_attempt + 1))
+done
 
 deploy_api() {
     rsync -a --delete \
