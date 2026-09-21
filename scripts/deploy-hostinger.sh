@@ -179,7 +179,9 @@ migration_files+=("$migration_file")
 : >"$migration_bundle"
 chmod 600 "$migration_bundle"
 for migration_file in "${migration_files[@]}"; do
-    printf 'SOURCE %s;\n' "$migration_file" >>"$migration_bundle"
+    printf '\n-- Migration: %s\n' "$migration_file" >>"$migration_bundle"
+    cat "$migration_file" >>"$migration_bundle"
+    printf '\n' >>"$migration_bundle"
 done
 
 migration_attempt=1
