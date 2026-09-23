@@ -55,7 +55,7 @@ class Documents extends MY_Controller
         }
 
         $mime = $this->detect_mime($path);
-        $allowed = array('image/jpeg', 'image/png', 'application/pdf');
+        $allowed = array('image/jpeg', 'image/png', 'image/webp', 'application/pdf');
         if (!in_array($mime, $allowed, TRUE)) {
             $this->fail('Jenis berkas tidak diizinkan.', 415, 'unsupported_file_type');
             return;
@@ -105,6 +105,7 @@ class Documents extends MY_Controller
         $extensions = array(
             'image/jpeg' => 'jpg',
             'image/png' => 'png',
+            'image/webp' => 'webp',
             'application/pdf' => 'pdf'
         );
         $extension = isset($extensions[$mime]) ? $extensions[$mime] : 'bin';
