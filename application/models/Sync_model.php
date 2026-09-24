@@ -360,6 +360,8 @@ class Sync_model extends CI_Model
                 $apply = $this->apply_resident_directory_snapshot($installation, $payload);
             } elseif ($aggregateType === 'staff_accounts' && $operation === 'snapshot') {
                 $apply = $this->apply_staff_accounts_snapshot($installation, $payload);
+            } elseif ($aggregateType === 'letter_verification' && $operation === 'upsert') {
+                $apply = $this->apply_letter_verification($installation, $aggregateId, $payload);
             }
 
             if (empty($apply['success']) || !$this->db->trans_status()) {
@@ -1405,6 +1407,107 @@ class Sync_model extends CI_Model
         );
     }
 
+    /**
+     * Store only the public, non-personal metadata of a letter issued by a
+     * village installation. The document itself remains on that installation.
+     */
+    private function apply_letter_verification(array $installation, $aggregateId, array $payload)
+    {
+        if (!$this->db->table_exists('local_letter_verifications')) {
+            return array('success' => FALSE, 'message' => 'Jalankan migrasi database 029 pada server.');
+        }
+
+        $publicId = strtolower(trim((string) $aggregateId));
+        $payloadId = strtolower(trim((string) ($payload['public_id'] ?? '')));
+        if (!preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/', $publicId)
+            || $payloadId !== $publicId) {
+            return array('success' => FALSE, 'message' => 'Identitas verifikasi surat lokal tidak valid.');
+        }
+
+        $serviceSlug = strtolower(trim((string) ($payload['service_slug'] ?? '')));
+        $serviceName = $this->catalog_text($payload['service_name'] ?? '', 180);
+        $letterNumber = $this->catalog_text($payload['letter_number'] ?? '', 160);
+        $issuedAt = trim((string) ($payload['issued_at'] ?? ''));
+        $fingerprint = strtolower(trim((string) ($payload['metadata_fingerprint'] ?? '')));
+        $rawVersion = $payload['event_version'] ?? NULL;
+        if (!preg_match('/^[a-z][a-z0-9-]{1,119}$/', $serviceSlug)
+            || $serviceName === '' || $letterNumber === ''
+            || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $issuedAt)
+            || strtotime($issuedAt) === FALSE
+            || !preg_match('/^[a-f0-9]{64}$/', $fingerprint)
+            || (!is_int($rawVersion) && !is_string($rawVersion))
+            || !preg_match('/^[1-9][0-9]{0,17}$/D', (string) $rawVersion)) {
+            return array('success' => FALSE, 'message' => 'Metadata verifikasi surat lokal tidak lengkap.');
+        }
+        $version = (int) $rawVersion;
+        $expectedFingerprint = hash('sha256', implode('|', array(
+            $publicId, $serviceSlug, $serviceName, $letterNumber, $issuedAt
+        )));
+        if (!hash_equals($expectedFingerprint, $fingerprint)) {
+            return array('success' => FALSE, 'message' => 'Sidik metadata verifikasi surat tidak cocok.');
+        }
+
+        $villageId = trim((string) ($installation['village_id'] ?? ''));
+        if ($villageId === '') {
+            return array('success' => FALSE, 'message' => 'Desa pemilik verifikasi surat tidak ditemukan.');
+        }
+        $tenant = $this->db->query('SELECT id FROM village_tenants WHERE id=? FOR UPDATE', array($villageId))->row_array();
+        if (!$tenant) {
+            return array('success' => FALSE, 'message' => 'Desa pemilik verifikasi surat tidak ditemukan.');
+        }
+
+        $existing = $this->db->query(
+            'SELECT * FROM local_letter_verifications WHERE public_id=? FOR UPDATE',
+            array($publicId)
+        )->row_array();
+        if ($existing) {
+            if ((string) $existing['village_id'] !== $villageId) {
+                return array('success' => FALSE, 'message' => 'QR surat sudah terdaftar pada desa lain.');
+            }
+            $currentVersion = max(0, (int) ($existing['source_revision'] ?? 0));
+            if ($version < $currentVersion) {
+                return array('success' => TRUE, 'message' => 'Metadata surat lama diabaikan.', 'stale' => TRUE);
+            }
+            if ($version === $currentVersion) {
+                $same = (string) $existing['metadata_fingerprint'] === $fingerprint
+                    && (string) $existing['service_slug'] === $serviceSlug
+                    && (string) $existing['letter_number'] === $letterNumber;
+                return $same
+                    ? array('success' => TRUE, 'message' => 'Metadata verifikasi surat sudah tersimpan.', 'stale' => TRUE)
+                    : array('success' => FALSE, 'message' => 'Versi metadata surat sudah dipakai oleh isi berbeda.');
+            }
+            $updated = $this->db->where('public_id', $publicId)->update('local_letter_verifications', array(
+                'village_id' => $villageId,
+                'service_slug' => $serviceSlug,
+                'service_name' => $serviceName,
+                'letter_number' => $letterNumber,
+                'issued_at' => $issuedAt,
+                'metadata_fingerprint' => $fingerprint,
+                'source_revision' => $version,
+                'updated_at' => date('Y-m-d H:i:s')
+            ));
+            return $updated
+                ? array('success' => TRUE, 'message' => 'Metadata verifikasi surat diperbarui.')
+                : array('success' => FALSE, 'message' => 'Metadata verifikasi surat belum dapat diperbarui.');
+        }
+
+        $inserted = $this->db->insert('local_letter_verifications', array(
+            'public_id' => $publicId,
+            'village_id' => $villageId,
+            'service_slug' => $serviceSlug,
+            'service_name' => $serviceName,
+            'letter_number' => $letterNumber,
+            'issued_at' => $issuedAt,
+            'metadata_fingerprint' => $fingerprint,
+            'source_revision' => $version,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s')
+        ));
+        return $inserted
+            ? array('success' => TRUE, 'message' => 'Metadata verifikasi surat tersimpan.')
+            : array('success' => FALSE, 'message' => 'Metadata verifikasi surat belum dapat disimpan.');
+    }
+
     private function apply_local_status_update(array $installation, $aggregateId, array $payload)
     {
         // Lock the request before evaluating the workflow. Two deliveries for
@@ -1659,7 +1762,8 @@ class Sync_model extends CI_Model
             'service_request:status_update' => 'event_version',
             'service_catalog:upsert' => 'catalog_version',
             'resident_directory:snapshot' => 'directory_version',
-            'staff_accounts:snapshot' => 'source_revision'
+            'staff_accounts:snapshot' => 'source_revision',
+            'letter_verification:upsert' => 'event_version'
         );
         $identity = (string) $aggregateType . ':' . (string) $operation;
         if (!isset($keys[$identity])) {

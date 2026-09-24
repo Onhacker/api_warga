@@ -108,7 +108,7 @@ mysqldump --defaults-extra-file="$mysql_defaults" \
     --single-transaction --skip-lock-tables "$database_name" >"$backup_file"
 chmod 600 "$backup_file"
 
-printf 'Menjalankan migrasi database 006 sampai 027...\n'
+printf 'Menjalankan migrasi database 006 sampai 029...\n'
 migration_files=()
 for migration in \
     006_service_catalog \
@@ -167,6 +167,13 @@ fi
 migration_files+=("$migration_file")
 
 migration_file="$API_REPO/database/migrations/027_institution_labels.sql"
+if [[ ! -f "$migration_file" ]]; then
+    printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
+    exit 1
+fi
+migration_files+=("$migration_file")
+
+migration_file="$API_REPO/database/migrations/029_local_letter_verification.sql"
 if [[ ! -f "$migration_file" ]]; then
     printf 'ERROR: migrasi tidak ditemukan: %s\n' "$migration_file" >&2
     exit 1

@@ -18,8 +18,8 @@ class Official_letter_html
         libxml_clear_errors();
         libxml_use_internal_errors($previous);
         if (!$loaded) return FALSE;
-        $tags = explode(' ', 'html head meta title style body main section article header footer div span p br hr b strong i em u s small sub sup h1 h2 h3 h4 h5 h6 table thead tbody tfoot tr th td colgroup col ul ol li dl dt dd img pre blockquote');
-        $attributes = explode(' ', 'lang charset name content http-equiv class id style title alt src width height align valign border cellpadding cellspacing colspan rowspan span scope start type reversed');
+        $tags = explode(' ', 'html head meta title style body main section article header footer div span p br hr b strong i em u s small sub sup h1 h2 h3 h4 h5 h6 table thead tbody tfoot tr th td colgroup col ul ol li dl dt dd img a pre blockquote');
+        $attributes = explode(' ', 'lang charset name content http-equiv class id style title alt src href width height align valign border cellpadding cellspacing colspan rowspan span scope start type reversed');
         $hasPolicy = FALSE;
         foreach ($dom->getElementsByTagName('*') as $node) {
             $tag = strtolower($node->tagName);
@@ -29,6 +29,7 @@ class Official_letter_html
                 if (!in_array($name, $attributes, TRUE)) return FALSE;
                 if ($name === 'style' && !self::safe_css($attribute->value)) return FALSE;
                 if ($name === 'src' && ($tag !== 'img' || !self::image($attribute->value))) return FALSE;
+                if ($name === 'href' && ($tag !== 'a' || !self::verification_link($attribute->value))) return FALSE;
                 if ($name === 'http-equiv' && $tag !== 'meta') return FALSE;
             }
             if ($tag === 'style' && !self::safe_css($node->textContent)) return FALSE;
@@ -59,5 +60,32 @@ class Official_letter_html
         $bytes = base64_decode($parts[2], TRUE);
         $info = is_string($bytes) ? @getimagesizefromstring($bytes) : FALSE;
         return $info && isset($info['mime']) && $info['mime'] === 'image/' . $parts[1];
+    }
+
+    private static function verification_link($uri)
+    {
+        $uri = trim(html_entity_decode((string) $uri, ENT_QUOTES, 'UTF-8'));
+        if ($uri === '' || preg_match('/[\r\n]/', $uri)) return FALSE;
+        $parts = parse_url($uri);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])
+            || !in_array(strtolower((string) $parts['scheme']), array('http', 'https'), TRUE)) return FALSE;
+        foreach (array('user', 'pass', 'query', 'fragment') as $forbiddenPart) {
+            if (array_key_exists($forbiddenPart, $parts)) return FALSE;
+        }
+
+        $allowed = rtrim(trim((string) getenv('WARGA_ALLOWED_ORIGIN')), '/');
+        $allowedParts = parse_url($allowed);
+        if (!is_array($allowedParts) || empty($allowedParts['scheme']) || empty($allowedParts['host'])) return FALSE;
+        if (strcasecmp((string) $allowedParts['host'], (string) $parts['host']) !== 0
+            || (int) ($allowedParts['port'] ?? 0) !== (int) ($parts['port'] ?? 0)
+            || strtolower((string) $allowedParts['scheme']) !== strtolower((string) $parts['scheme'])) return FALSE;
+
+        $basePath = rtrim((string) ($allowedParts['path'] ?? ''), '/');
+        $path = (string) ($parts['path'] ?? '');
+        $prefix = $basePath . '/verifikasi-surat/';
+        if (strpos($path, $prefix) !== 0) return FALSE;
+        $suffix = substr($path, strlen($prefix));
+        return preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $suffix) === 1
+            || preg_match('/^lokal\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i', $suffix) === 1;
     }
 }
