@@ -226,13 +226,40 @@ try {
     check(array_column($requestOverride->service_types($villageB), 'slug') === array('global-modern'),
         'optional village override does not duplicate or mutate the global definition');
 
+    $staleSlug = 'stale-derived-document';
+    $db->insert('service_types', array(
+        'slug' => $staleSlug,
+        'name' => 'Dokumen Turunan Lama',
+        'short_name' => 'Dokumen Turunan Lama',
+        'requirements_json' => '[]',
+        'form_schema_json' => json_encode(array('version' => 1, 'fields' => array())),
+        'template_key' => $staleSlug,
+        'is_active' => 1,
+        'source_hash' => hash('sha256', $staleSlug),
+        'source_revision' => (int) $published['revision']
+    ));
+    check((int) $catalog->status()['service_count'] === 3,
+        'status detects an active row left outside the current snapshot');
+
+    $reconciled = $catalog->publish(array(
+        'services' => $services,
+        'catalog_empty' => FALSE,
+        'catalog_hash' => $hash,
+        'published_by' => 'Test Super Admin'
+    ));
+    check(!empty($reconciled['success']) && empty($reconciled['already_published'])
+        && (int) $reconciled['revision'] === (int) $published['revision'] + 1
+        && (int) $catalog->status()['service_count'] === 2
+        && (int) $db->where('slug', $staleSlug)->get('service_types')->row_array()['is_active'] === 0,
+        'identical snapshot repairs stale active services before reporting success');
+
     $repeat = $catalog->publish(array(
         'services' => $services,
         'catalog_empty' => FALSE,
         'catalog_hash' => $hash,
         'published_by' => 'Test Super Admin'
     ));
-    check(!empty($repeat['already_published']) && (int) $repeat['revision'] === (int) $published['revision'],
+    check(!empty($repeat['already_published']) && (int) $repeat['revision'] === (int) $reconciled['revision'],
         'identical central publication is idempotent');
 
     $legacyCount = (int) $db->where('village_id', $villageA)->count_all_results('village_service_catalog');

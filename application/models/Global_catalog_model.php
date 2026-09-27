@@ -79,7 +79,10 @@ class Global_catalog_model extends CI_Model
         }
 
         $lastHash = strtolower(trim((string) $state['last_hash']));
-        if ($lastHash !== '' && hash_equals($lastHash, $providedHash)) {
+        if ($lastHash !== ''
+            && hash_equals($lastHash, $providedHash)
+            && (int) $state['service_count'] === count($normalised)
+            && $this->active_catalog_matches($normalised)) {
             $this->db->trans_commit();
             return array(
                 'success' => TRUE,
@@ -155,6 +158,38 @@ class Global_catalog_model extends CI_Model
             'published_at' => $now,
             'message' => count($normalised) . ' layanan berhasil diterbitkan sebagai katalog global.'
         );
+    }
+
+    /**
+     * A matching snapshot hash is not sufficient on its own. Older releases
+     * could leave services active after they disappeared from a snapshot, so
+     * verify the materialized catalogue before taking the idempotent fast path.
+     */
+    private function active_catalog_matches(array $services)
+    {
+        $expected = array();
+        foreach ($services as $service) {
+            $expected[(string) $service['slug']] = strtolower(trim((string) $service['source_hash']));
+        }
+        if (empty($expected)) return FALSE;
+
+        $query = $this->db
+            ->select('slug, source_hash')
+            ->where('is_active', 1)
+            ->get('service_types');
+        if (!$query) return FALSE;
+        $rows = $query->result_array();
+        if (count($rows) !== count($expected)) return FALSE;
+
+        foreach ($rows as $row) {
+            $slug = (string) $row['slug'];
+            $actualHash = strtolower(trim((string) $row['source_hash']));
+            if (!isset($expected[$slug]) || $actualHash === ''
+                || !hash_equals($expected[$slug], $actualHash)) {
+                return FALSE;
+            }
+        }
+        return TRUE;
     }
 
     private function schema_ready()
