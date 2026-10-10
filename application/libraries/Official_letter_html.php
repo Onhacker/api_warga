@@ -19,7 +19,7 @@ class Official_letter_html
         libxml_use_internal_errors($previous);
         if (!$loaded) return FALSE;
         $tags = explode(' ', 'html head meta title style body main section article header footer div span p br hr b strong i em u s small sub sup h1 h2 h3 h4 h5 h6 table thead tbody tfoot tr th td colgroup col ul ol li dl dt dd img a pre blockquote');
-        $attributes = explode(' ', 'lang charset name content http-equiv class id style title alt src href width height align valign border cellpadding cellspacing colspan rowspan span scope start type reversed');
+        $attributes = explode(' ', 'lang charset name content http-equiv class id style title alt src href aria-label width height align valign border cellpadding cellspacing colspan rowspan span scope start type reversed');
         $hasPolicy = FALSE;
         foreach ($dom->getElementsByTagName('*') as $node) {
             $tag = strtolower($node->tagName);
@@ -30,6 +30,7 @@ class Official_letter_html
                 if ($name === 'style' && !self::safe_css($attribute->value)) return FALSE;
                 if ($name === 'src' && ($tag !== 'img' || !self::image($attribute->value))) return FALSE;
                 if ($name === 'href' && ($tag !== 'a' || !self::verification_link($attribute->value))) return FALSE;
+                if ($name === 'aria-label' && ($tag !== 'a' || $attribute->value !== 'Buka verifikasi surat')) return FALSE;
                 if ($name === 'http-equiv' && $tag !== 'meta') return FALSE;
             }
             if ($tag === 'style' && !self::safe_css($node->textContent)) return FALSE;

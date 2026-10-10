@@ -114,6 +114,7 @@ try {
     mkdir($storage, 0700);
     putenv('PRIVATE_STORAGE_PATH=' . $storage);
     putenv('API_DEMO_MODE=0');
+    putenv('WARGA_ALLOWED_ORIGIN=https://warga.example.test');
     $controller = new Requests();
     $controller->installation = array('id' => api_uuid(), 'village_id' => $village);
     $controller->Sync_model = $model;
@@ -140,7 +141,11 @@ try {
     $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_SHA256'] = hash('sha256', $controller->rawBody);
     check(empty($controller->official_document($requests[0])['success']), 'issued request cannot replace official PDF');
     check(file_get_contents($row['document_path']) === $body, 'rejected replacement preserves original PDF');
-    $html = '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'"><style>body{font:12pt Arial}</style></head><body><main>Surat HTML test</main></body></html>';
+    $verificationUrl = 'https://warga.example.test/verifikasi-surat/123e4567-e89b-42d3-a456-426614174000';
+    $html = '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'"><style>body{font:12pt Arial}</style></head><body><main>Surat HTML test<a href="' . $verificationUrl . '" aria-label="Buka verifikasi surat">Verifikasi</a></main></body></html>';
+    check(Official_letter_html::valid($html), 'trusted verification link is accepted');
+    check(!Official_letter_html::valid(str_replace('warga.example.test', 'evil.example.test', $html)), 'foreign verification link is rejected');
+    check(!Official_letter_html::valid(str_replace('Buka verifikasi surat', 'Tautan lain', $html)), 'unexpected verification label is rejected');
     $controller->rawBody = $html;
     $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_SHA256'] = hash('sha256', $html);
     $_SERVER['HTTP_X_SMARTDESA_DOCUMENT_NAME'] = rtrim(strtr(base64_encode('surat-test.html'), '+/', '-_'), '=');
